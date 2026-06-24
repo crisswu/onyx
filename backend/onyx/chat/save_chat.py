@@ -10,7 +10,10 @@ from onyx.context.search.models import SearchDoc
 from onyx.db.chat import add_search_docs_to_chat_message
 from onyx.db.chat import add_search_docs_to_tool_call
 from onyx.db.chat import create_db_search_doc
+from onyx.db.eva_personal import EvaConversationDB
+from onyx.db.eva_personal import eva_conversation_db_path_for_user
 from onyx.db.models import ChatMessage
+from onyx.db.models import MessageType
 from onyx.db.models import ToolCall
 from onyx.db.tools import create_tool_call_no_commit
 from onyx.file_store.models import FileDescriptor
@@ -22,6 +25,41 @@ from onyx.utils.logger import setup_logger
 from onyx.utils.postgres_sanitization import sanitize_string
 
 logger = setup_logger()
+
+
+def _write_eva_conversation_memory(
+    assistant_message: ChatMessage,
+    assistant_text: str | None,
+) -> None:
+    if not assistant_text:
+        return
+
+    user_message = assistant_message.parent_message
+    if user_message is None and assistant_message.parent_message_id is not None:
+        return
+    if user_message is None or user_message.message_type != MessageType.USER:
+        return
+    if not user_message.message:
+        return
+
+    chat_user = assistant_message.chat_session.user
+    if chat_user is None:
+        return
+
+    user_key = (
+        "anonymous"
+        if chat_user.is_anonymous
+        else (chat_user.email or str(chat_user.id))
+    )
+
+    try:
+        db = EvaConversationDB(db_path=eva_conversation_db_path_for_user(user_key))
+        db.add_conversation(user_message.message, assistant_text)
+    except Exception:
+        logger.exception(
+            "Failed to write EVA conversation memory for chat_message_id=%s",
+            assistant_message.id,
+        )
 
 
 def _extract_referenced_file_descriptors(
@@ -350,3 +388,4 @@ def save_chat_turn(
 
     # Finally save the messages, tool calls, and docs
     db_session.commit()
+    _write_eva_conversation_memory(assistant_message, sanitized_message_text)

@@ -4,6 +4,10 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from onyx.db.eva_config import get_eva_tools_config
+from onyx.db.eva_config import get_eva_tools_config_for_user
+from onyx.db.eva_memory import EvaMemoryDB
+from onyx.db.eva_memory import EvaMemoryItem
 from onyx.db.memory import UserMemoryContext
 from onyx.db.persona import get_default_behavior_persona
 from onyx.db.user_file import calculate_user_files_token_count
@@ -42,6 +46,158 @@ from onyx.tools.tool_implementations.python.python_tool import PythonTool
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
 from onyx.tools.tool_implementations.web_search.web_search_tool import WebSearchTool
 from onyx.utils.timing import log_function_time
+
+EVA_PROMPT_FILE_CHAR_LIMIT = 12000
+EVA_RUNTIME_CONTEXT_CHAR_LIMIT = 5000
+EVA_RUNTIME_RELEVANT_CONVERSATION_LIMIT = 3
+EVA_RUNTIME_RECENT_CONVERSATION_LIMIT = 6
+EVA_RUNTIME_CONVERSATION_CHAR_LIMIT = 600
+
+
+def _read_eva_prompt_file(filename: str, user_key: str | None) -> str:
+    data_dir = get_eva_tools_config_for_user(user_key).data_dir
+    if data_dir is None:
+        return ""
+
+    path = data_dir / filename
+    if not path.exists() or not path.is_file():
+        return ""
+
+    content = path.read_text(encoding="utf-8").strip()
+    if len(content) <= EVA_PROMPT_FILE_CHAR_LIMIT:
+        return content
+    return content[:EVA_PROMPT_FILE_CHAR_LIMIT].rstrip() + "\n...（内容已截断）"
+
+
+def _read_eva_persona_file() -> str:
+    data_dir = get_eva_tools_config().data_dir
+    if data_dir is None:
+        return ""
+
+    path = data_dir / "eva.md"
+    if not path.exists() or not path.is_file():
+        return ""
+
+    content = path.read_text(encoding="utf-8").strip()
+    if len(content) <= EVA_PROMPT_FILE_CHAR_LIMIT:
+        return content
+    return content[:EVA_PROMPT_FILE_CHAR_LIMIT].rstrip() + "\n...（内容已截断）"
+
+
+def _build_eva_persona_section(user_key: str | None) -> str:
+    eva_persona = _read_eva_persona_file()
+    criss_profile = _read_eva_prompt_file("criss.md", user_key)
+    if not eva_persona and not criss_profile:
+        return ""
+
+    sections = [
+        "\n\n# EVA 复刻人格与记忆设定\n"
+        "以下内容来自 EVA 的配置目录，是当前智能体的身份设定和对 Criss 的长期了解。"
+        "回答时应自然遵循这些设定；除非 Criss 明确询问，不要主动说明这些设定来自文件。"
+    ]
+
+    if eva_persona:
+        sections.append(f"## EVA 人格设定\n{eva_persona}")
+
+    if criss_profile:
+        sections.append(f"## 对 Criss 的了解\n{criss_profile}")
+
+    return "\n\n".join(sections)
+
+
+def _format_eva_conversation_item(item: EvaMemoryItem) -> str:
+    timestamp = item.timestamp or "时间未知"
+    content = item.content
+    if len(content) > EVA_RUNTIME_CONVERSATION_CHAR_LIMIT:
+        content = content[:EVA_RUNTIME_CONVERSATION_CHAR_LIMIT].rstrip() + "..."
+    return f"- [{timestamp}]\n{content}"
+
+
+def _build_eva_runtime_context_section(
+    user_key: str | None,
+    recall_query: str | None = None,
+) -> str:
+    if user_key is None:
+        return ""
+
+    try:
+        memory_db = EvaMemoryDB(user_key=user_key)
+        profile = memory_db.get_profile_snapshot()
+        recent_conversations = memory_db.get_recent_conversations(
+            limit=EVA_RUNTIME_RECENT_CONVERSATION_LIMIT
+        )
+    except Exception:
+        return ""
+
+    relevant_conversations: list[EvaMemoryItem] = []
+    if recall_query and recall_query.strip():
+        try:
+            recall_result = memory_db.search(
+                recall_query.strip(),
+                limit=EVA_RUNTIME_RELEVANT_CONVERSATION_LIMIT,
+                scope="conversations",
+                include_profile=False,
+            )
+            relevant_conversations = recall_result.items_by_source.get("历史对话", [])
+        except Exception:
+            relevant_conversations = []
+
+    lines: list[str] = []
+
+    if profile.relationship_state:
+        state = profile.relationship_state
+        lines.append(
+            "## EVA 关系状态\n"
+            f"- 阶段: {state.get('current_stage')}\n"
+            f"- 互动次数: {state.get('interaction_count')}\n"
+            f"- 连续天数: {state.get('continuous_days')}\n"
+            f"- 总积分: {state.get('total_points')}"
+        )
+
+    seen_conversation_ids: set[tuple[str, int]] = set()
+    if relevant_conversations:
+        lines.append("## 与当前问题相关的 EVA 历史对话")
+        for item in relevant_conversations:
+            seen_conversation_ids.add((item.source, item.id))
+            lines.append(_format_eva_conversation_item(item))
+
+    deduped_recent_conversations = [
+        item
+        for item in recent_conversations
+        if (item.source, item.id) not in seen_conversation_ids
+    ]
+    if deduped_recent_conversations:
+        lines.append("## 最近 EVA 对话")
+        for item in deduped_recent_conversations:
+            lines.append(_format_eva_conversation_item(item))
+
+    if not lines:
+        return ""
+
+    section = (
+        "\n\n# EVA 当前记忆上下文\n"
+        "以下内容来自当前账号绑定的本地 EVA 记忆库，用于保持连续性。"
+        "不要主动暴露数据库或文件路径。\n\n"
+        + "\n\n".join(lines)
+    )
+    if len(section) > EVA_RUNTIME_CONTEXT_CHAR_LIMIT:
+        return section[:EVA_RUNTIME_CONTEXT_CHAR_LIMIT].rstrip() + "\n...（上下文已截断）"
+    return section
+
+
+def build_eva_system_prompt_extension(
+    user_memory_context: UserMemoryContext | None,
+    eva_recall_query: str | None = None,
+) -> str:
+    eva_user_key = None
+    if user_memory_context and user_memory_context.user_info.email:
+        eva_user_key = user_memory_context.user_info.email
+    elif user_memory_context and user_memory_context.user_id:
+        eva_user_key = str(user_memory_context.user_id)
+
+    return _build_eva_persona_section(eva_user_key) + _build_eva_runtime_context_section(
+        eva_user_key, recall_query=eva_recall_query
+    )
 
 
 def get_default_base_system_prompt(db_session: Session) -> str:
@@ -195,6 +351,7 @@ def build_system_prompt(
     base_system_prompt: str,
     datetime_aware: bool = False,
     user_memory_context: UserMemoryContext | None = None,
+    eva_recall_query: str | None = None,
     tools: Sequence[Tool] | None = None,
     should_cite_documents: bool = False,
     include_all_guidance: bool = False,
@@ -213,6 +370,10 @@ def build_system_prompt(
 
     # Replace reminder tag placeholder if present
     system_prompt = replace_reminder_tag(system_prompt)
+
+    system_prompt += build_eva_system_prompt_extension(
+        user_memory_context, eva_recall_query=eva_recall_query
+    )
 
     company_context = get_company_context()
     user_info_section = _build_user_information_section(

@@ -4,6 +4,15 @@ from typing import Union
 from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
     CodingAgentTool,
 )
+from onyx.tools.tool_implementations.eva_bash import ExecuteBashTool
+from onyx.tools.tool_implementations.eva_knowledge import DeleteNoteTool
+from onyx.tools.tool_implementations.eva_knowledge import ListNotesTool
+from onyx.tools.tool_implementations.eva_knowledge import SaveNoteTool
+from onyx.tools.tool_implementations.eva_knowledge import SearchNotesTool
+from onyx.tools.tool_implementations.eva_knowledge import UpdateNoteTool
+from onyx.tools.tool_implementations.eva_personal import EmailManagerTool
+from onyx.tools.tool_implementations.eva_personal import RecallMemoryTool
+from onyx.tools.tool_implementations.eva_personal import ScheduleReminderTool
 from onyx.tools.tool_implementations.file_reader.file_reader_tool import FileReaderTool
 from onyx.tools.tool_implementations.images.image_generation_tool import (
     ImageGenerationTool,
@@ -31,6 +40,15 @@ BUILT_IN_TOOL_TYPES = Union[
     FileReaderTool,
     MemoryTool,
     CodingAgentTool,
+    SaveNoteTool,
+    SearchNotesTool,
+    ListNotesTool,
+    UpdateNoteTool,
+    DeleteNoteTool,
+    RecallMemoryTool,
+    ScheduleReminderTool,
+    EmailManagerTool,
+    ExecuteBashTool,
 ]
 
 BUILT_IN_TOOL_MAP: dict[str, Type[BUILT_IN_TOOL_TYPES]] = {
@@ -43,6 +61,15 @@ BUILT_IN_TOOL_MAP: dict[str, Type[BUILT_IN_TOOL_TYPES]] = {
     FileReaderTool.__name__: FileReaderTool,
     MemoryTool.__name__: MemoryTool,
     CodingAgentTool.__name__: CodingAgentTool,
+    SaveNoteTool.__name__: SaveNoteTool,
+    SearchNotesTool.__name__: SearchNotesTool,
+    ListNotesTool.__name__: ListNotesTool,
+    UpdateNoteTool.__name__: UpdateNoteTool,
+    DeleteNoteTool.__name__: DeleteNoteTool,
+    RecallMemoryTool.__name__: RecallMemoryTool,
+    ScheduleReminderTool.__name__: ScheduleReminderTool,
+    EmailManagerTool.__name__: EmailManagerTool,
+    ExecuteBashTool.__name__: ExecuteBashTool,
 }
 
 STOPPING_TOOLS_NAMES: list[str] = [ImageGenerationTool.NAME]
@@ -70,6 +97,8 @@ def _build_tool_name_to_class() -> dict[str, Type[BUILT_IN_TOOL_TYPES]]:
             tool_name = name_attr.fget(cls)
         elif isinstance(name_attr, str):
             tool_name = name_attr
+        elif isinstance(cls.__dict__.get("NAME"), str):
+            tool_name = cls.__dict__["NAME"]
         else:
             raise ValueError(
                 f"Built-in tool {cls.__name__} must define a valid LLM-facing tool name"

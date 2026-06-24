@@ -47,6 +47,12 @@ export const SEARCH_PROVIDER_DETAILS: Record<
     apiKeyUrl:
       "https://api-dashboard.search.brave.com/app/documentation/web-search/get-started",
   },
+  tavily: {
+    label: "Tavily",
+    subtitle: "Tavily Search API",
+    helper: "Connect to Tavily to set up web search.",
+    apiKeyUrl: "https://app.tavily.com/home",
+  },
   google_pse: {
     label: "Google PSE",
     subtitle: "Google",
@@ -102,6 +108,7 @@ const SEARCH_PROVIDER_CAPABILITIES: Record<
   exa: { requiresApiKey: true, requiredConfigKeys: [] },
   serper: { requiresApiKey: true, requiredConfigKeys: [] },
   brave: { requiresApiKey: true, requiredConfigKeys: [] },
+  tavily: { requiresApiKey: true, requiredConfigKeys: [] },
   google_pse: {
     requiresApiKey: true,
     requiredConfigKeys: ["search_engine_id"],

@@ -20,6 +20,7 @@ import AppHealthBanner from "@/sections/AppHealthBanner";
 import LicenseExpiryBanner from "@/sections/LicenseExpiryBanner";
 import ProductGatingWrapper from "@/providers/ProductGatingWrapper";
 import SWRConfigProvider from "@/providers/SWRConfigProvider";
+import ChineseLocalizationProvider from "@/providers/ChineseLocalizationProvider";
 
 const hankenGrotesk = Hanken_Grotesk({
   subsets: ["latin"],
@@ -52,7 +53,7 @@ const dmMono = DM_Mono({
 
 export const metadata: Metadata = {
   title: "Onyx",
-  description: "Question answering for your documents",
+  description: "面向企业文档的智能问答",
 };
 
 // force-dynamic prevents Next.js from statically prerendering pages at build
@@ -68,7 +69,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   return (
     <html
-      lang="en"
+      lang="zh-CN"
       className={cn(hankenGrotesk.variable, dmMono.variable)}
       suppressHydrationWarning
     >
@@ -109,6 +110,7 @@ export default function Layout({ children }: LayoutProps) {
                   <AppHealthBanner />
                   <LicenseExpiryBanner />
                   <AppProvider>
+                    <ChineseLocalizationProvider />
                     <DynamicMetadata />
                     <CustomAnalyticsScript />
                     <PostHogPageTracker />

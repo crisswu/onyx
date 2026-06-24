@@ -165,7 +165,16 @@ def _get_default_tokenizer() -> BaseTokenizer:
     """Lazy-load the default tokenizer to avoid loading it at module import time."""
     global _DEFAULT_TOKENIZER
     if _DEFAULT_TOKENIZER is None:
-        _DEFAULT_TOKENIZER = HuggingFaceTokenizer(DOCUMENT_ENCODER_MODEL)
+        try:
+            _DEFAULT_TOKENIZER = HuggingFaceTokenizer(DOCUMENT_ENCODER_MODEL)
+        except Exception as error:
+            logger.warning(
+                "Failed to initialize default HuggingFaceTokenizer for %s; "
+                "falling back to tiktoken cl100k-compatible tokenizer: %s",
+                DOCUMENT_ENCODER_MODEL,
+                error,
+            )
+            _DEFAULT_TOKENIZER = TiktokenTokenizer("gpt-4")
     return _DEFAULT_TOKENIZER
 
 

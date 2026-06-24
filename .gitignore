@@ -34,6 +34,16 @@ backend/onyx/evals/one_off/*.json
 .env
 jira_test_env
 settings.json
+.env.*
+!.env.example
+!.env.template
+!/.vscode/.env.k8s.template
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+data/
+onyx_data/
 
 # others
 /deployment/data/nginx/app.conf

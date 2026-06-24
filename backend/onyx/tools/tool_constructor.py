@@ -36,6 +36,15 @@ from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
 from onyx.tools.tool_implementations.custom.custom_tool import (
     build_custom_tools_from_openapi_schema_and_headers,
 )
+from onyx.tools.tool_implementations.eva_bash import ExecuteBashTool
+from onyx.tools.tool_implementations.eva_knowledge import DeleteNoteTool
+from onyx.tools.tool_implementations.eva_knowledge import ListNotesTool
+from onyx.tools.tool_implementations.eva_knowledge import SaveNoteTool
+from onyx.tools.tool_implementations.eva_knowledge import SearchNotesTool
+from onyx.tools.tool_implementations.eva_knowledge import UpdateNoteTool
+from onyx.tools.tool_implementations.eva_personal import EmailManagerTool
+from onyx.tools.tool_implementations.eva_personal import RecallMemoryTool
+from onyx.tools.tool_implementations.eva_personal import ScheduleReminderTool
 from onyx.tools.tool_implementations.file_reader.file_reader_tool import FileReaderTool
 from onyx.tools.tool_implementations.images.image_generation_tool import (
     ImageGenerationTool,
@@ -50,6 +59,18 @@ from onyx.utils.headers import header_dict_to_header_list
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+EVA_KNOWLEDGE_TOOL_CLASSES = (
+    SaveNoteTool,
+    SearchNotesTool,
+    ListNotesTool,
+    UpdateNoteTool,
+    DeleteNoteTool,
+    RecallMemoryTool,
+    ScheduleReminderTool,
+    EmailManagerTool,
+    ExecuteBashTool,
+)
 
 
 class SearchToolConfig(BaseModel):
@@ -174,6 +195,7 @@ def _construct_tools_impl(
     user_oauth_token = None
     if user.oauth_accounts:
         user_oauth_token = user.oauth_accounts[0].access_token
+    eva_user_key = "anonymous" if user.is_anonymous else (user.email or str(user.id))
 
     search_settings = get_current_search_settings(db_session)
     # This flow is for search so we do not get all indices.
@@ -319,6 +341,21 @@ def _construct_tools_impl(
                         chat_file_ids=cfg.chat_file_ids,
                     )
                 ]
+
+            # Handle EVA knowledge base tools
+            elif tool_cls in EVA_KNOWLEDGE_TOOL_CLASSES:
+                if tool_cls.__name__ == ExecuteBashTool.__name__:
+                    tool_dict[db_tool_model.id] = [
+                        tool_cls(tool_id=db_tool_model.id, emitter=emitter)
+                    ]
+                else:
+                    tool_dict[db_tool_model.id] = [
+                        tool_cls(
+                            tool_id=db_tool_model.id,
+                            emitter=emitter,
+                            user_key=eva_user_key,
+                        )
+                    ]
 
             # Handle KG Tool
             # TODO: disabling for now because it's broken in the refactor

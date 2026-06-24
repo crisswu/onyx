@@ -21,6 +21,7 @@ from onyx.chat.models import ExtractedContextFiles
 from onyx.chat.models import FileToolMetadata
 from onyx.chat.models import LlmStepResult
 from onyx.chat.models import ToolCallSimple
+from onyx.chat.prompt_utils import build_eva_system_prompt_extension
 from onyx.chat.prompt_utils import build_reminder_message
 from onyx.chat.prompt_utils import build_system_prompt
 from onyx.chat.prompt_utils import get_default_base_system_prompt
@@ -69,6 +70,11 @@ from onyx.utils.logger import setup_logger
 from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
+
+TOOL_RESPONSE_TRUNCATION_SUFFIX = (
+    "\n\n...（工具结果过长，已截断以适配模型上下文）"
+)
+SHORT_TOOL_RESPONSE_TRUNCATION_SUFFIX = "...（工具结果已截断）"
 
 
 class EmptyLLMResponseError(RuntimeError):
@@ -389,6 +395,14 @@ def construct_message_history(
     last_user_tokens = last_user_message.token_count
     after_user_tokens = sum(msg.token_count for msg in messages_after_last_user)
 
+    if last_user_tokens + after_user_tokens > history_token_budget and token_counter:
+        messages_after_last_user = _truncate_tool_responses_after_last_user(
+            messages_after_last_user=messages_after_last_user,
+            available_tokens_for_after_user=history_token_budget - last_user_tokens,
+            token_counter=token_counter,
+        )
+        after_user_tokens = sum(msg.token_count for msg in messages_after_last_user)
+
     # Check if we can fit at least the last user message and messages after it
     required_tokens = last_user_tokens + after_user_tokens
     if required_tokens > history_token_budget:
@@ -504,6 +518,89 @@ def construct_message_history(
         result.append(reminder_message)
 
     return _drop_orphaned_tool_call_responses(result)
+
+
+def _truncate_text_to_token_budget(
+    text: str,
+    max_tokens: int,
+    token_counter: Callable[[str], int],
+) -> tuple[str, int]:
+    if max_tokens <= 0:
+        return "", 0
+
+    suffix = TOOL_RESPONSE_TRUNCATION_SUFFIX
+    suffix_tokens = token_counter(suffix)
+    if max_tokens <= suffix_tokens:
+        short_suffix_tokens = token_counter(SHORT_TOOL_RESPONSE_TRUNCATION_SUFFIX)
+        if short_suffix_tokens <= max_tokens:
+            return SHORT_TOOL_RESPONSE_TRUNCATION_SUFFIX, short_suffix_tokens
+        return "", 0
+
+    full_tokens = token_counter(text)
+    if full_tokens <= max_tokens:
+        return text, full_tokens
+
+    low = 0
+    high = len(text)
+    best_text = suffix
+    best_tokens = suffix_tokens
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = text[:mid].rstrip() + suffix
+        candidate_tokens = token_counter(candidate)
+        if candidate_tokens <= max_tokens:
+            best_text = candidate
+            best_tokens = candidate_tokens
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return best_text, best_tokens
+
+
+def _truncate_tool_responses_after_last_user(
+    messages_after_last_user: list[ChatMessageSimple],
+    available_tokens_for_after_user: int,
+    token_counter: Callable[[str], int],
+) -> list[ChatMessageSimple]:
+    tool_response_indices = [
+        index
+        for index, msg in enumerate(messages_after_last_user)
+        if msg.message_type == MessageType.TOOL_CALL_RESPONSE
+    ]
+    if not tool_response_indices:
+        return messages_after_last_user
+
+    non_tool_tokens = sum(
+        msg.token_count
+        for msg in messages_after_last_user
+        if msg.message_type != MessageType.TOOL_CALL_RESPONSE
+    )
+    available_for_tool_responses = available_tokens_for_after_user - non_tool_tokens
+    if available_for_tool_responses <= 0:
+        return messages_after_last_user
+
+    per_tool_budget = max(1, available_for_tool_responses // len(tool_response_indices))
+    truncated_messages = list(messages_after_last_user)
+
+    for index in tool_response_indices:
+        msg = messages_after_last_user[index]
+        if msg.token_count <= per_tool_budget:
+            continue
+
+        truncated_text, truncated_tokens = _truncate_text_to_token_budget(
+            msg.message,
+            per_tool_budget,
+            token_counter,
+        )
+        truncated_messages[index] = msg.model_copy(
+            update={
+                "message": truncated_text,
+                "token_count": truncated_tokens,
+            }
+        )
+
+    return truncated_messages
 
 
 def _drop_orphaned_tool_call_responses(
@@ -722,17 +819,30 @@ def run_llm_loop(
             # Handling the system prompt and custom agent prompt
             # The section below calculates the available tokens for history a bit more accurately
             # now that project files are loaded in.
+            eva_recall_query = next(
+                (
+                    msg.message
+                    for msg in reversed(simple_chat_history)
+                    if msg.message_type == MessageType.USER
+                ),
+                None,
+            )
             if persona and persona.replace_base_system_prompt:
                 # Handles the case where user has checked off the "Replace base system prompt" checkbox
-                system_prompt = (
-                    ChatMessageSimple(
-                        message=persona.system_prompt,
-                        token_count=token_counter(persona.system_prompt),
+                if persona.system_prompt:
+                    system_prompt_str = (
+                        persona.system_prompt
+                        + build_eva_system_prompt_extension(
+                            user_memory_context, eva_recall_query=eva_recall_query
+                        )
+                    )
+                    system_prompt = ChatMessageSimple(
+                        message=system_prompt_str,
+                        token_count=token_counter(system_prompt_str),
                         message_type=MessageType.SYSTEM,
                     )
-                    if persona.system_prompt
-                    else None
-                )
+                else:
+                    system_prompt = None
                 custom_agent_prompt_msg = None
             else:
                 # If it's an empty string, we assume the user does not want to include it as an empty System message
@@ -750,6 +860,7 @@ def run_llm_loop(
                         base_system_prompt=default_base_system_prompt,
                         datetime_aware=persona.datetime_aware if persona else True,
                         user_memory_context=prompt_memory_context,
+                        eva_recall_query=eva_recall_query,
                         tools=tools,
                         should_cite_documents=should_cite_documents
                         or always_cite_documents,
