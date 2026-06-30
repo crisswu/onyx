@@ -63,6 +63,7 @@ import { useModalContext } from "@/components/context/ModalContext";
 import {
   SvgDevKit,
   SvgEditBig,
+  SvgFileText,
   SvgFolderPlus,
   SvgMoreHorizontal,
   SvgOnyxOctagon,
@@ -80,6 +81,7 @@ import { dismissNotification } from "@/lib/notifications/api";
 import AccountPopover from "@/sections/sidebar/AccountPopover";
 import ChatSearchCommandMenu from "@/sections/sidebar/ChatSearchCommandMenu";
 import { useQueryController } from "@/providers/QueryControllerProvider";
+import { isBlackboardAllowedUser } from "@/lib/blackboard/access";
 
 // Visible-agents = pinned-agents + current-agent (if current-agent not in pinned-agents)
 // OR Visible-agents = pinned-agents (if current-agent in pinned-agents)
@@ -476,6 +478,7 @@ const AppSidebar = memo(function AppSidebarInner() {
   const defaultAppMode =
     (user?.preferences?.default_app_mode?.toLowerCase() as "chat" | "search") ??
     "chat";
+  const blackboardAllowed = isBlackboardAllowedUser(user);
   const newSessionButton = useMemo(() => {
     const href =
       combinedSettings?.settings?.disable_default_assistant && currentAgent
@@ -505,6 +508,22 @@ const AppSidebar = memo(function AppSidebarInner() {
     currentAgent,
     defaultAppMode,
   ]);
+  const blackboardButton = useMemo(
+    () => (
+      <div data-testid="AppSidebar/blackboard">
+        <SidebarTab
+          icon={SvgFileText}
+          href="/app/blackboard"
+          folded={folded}
+          selected={activeSidebarTab.isBlackboard()}
+          variant={folded ? "sidebar-heavy" : "sidebar-light"}
+        >
+          黑板
+        </SidebarTab>
+      </div>
+    ),
+    [folded, activeSidebarTab]
+  );
 
   const buildButton = useMemo(
     () => (
@@ -668,6 +687,7 @@ const AppSidebar = memo(function AppSidebarInner() {
         >
           <div className="flex flex-col">
             {newSessionButton}
+            {blackboardAllowed && blackboardButton}
             {searchChatsButton}
             {isOnyxCraftEnabled && buildButton}
             {folded && moreAgentsButton}

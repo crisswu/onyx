@@ -350,6 +350,105 @@ class EvaReminderDB:
             return int(cursor.rowcount)
 
 
+class EvaBlackboardDB:
+    BOARD_COUNT = 10
+
+    def __init__(self, db_path: Path | None = None) -> None:
+        self.db_path = db_path or eva_knowledge_db_path()
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS blackboards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    board_number INTEGER NOT NULL UNIQUE,
+                    content TEXT DEFAULT '',
+                    settings TEXT DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO blackboards (board_number)
+                VALUES (?)
+                """,
+                [(board_number,) for board_number in range(1, self.BOARD_COUNT + 1)],
+            )
+
+    def get_blackboard(self, board_number: int) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM blackboards
+                WHERE board_number = ?
+                """,
+                (board_number,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        data = dict(row)
+        settings = data.get("settings")
+        if isinstance(settings, str):
+            try:
+                parsed_settings = json.loads(settings)
+                data["settings"] = (
+                    parsed_settings if isinstance(parsed_settings, Mapping) else {}
+                )
+            except json.JSONDecodeError:
+                data["settings"] = {}
+        else:
+            data["settings"] = {}
+        return data
+
+    def save_blackboard(
+        self,
+        board_number: int,
+        content: str,
+        settings: Mapping[str, Any] | None = None,
+    ) -> bool:
+        settings_json = json.dumps(dict(settings or {}), ensure_ascii=False)
+        with _connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE blackboards
+                SET content = ?, settings = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE board_number = ?
+                """,
+                (content, settings_json, board_number),
+            )
+            return int(cursor.rowcount) > 0
+
+    def list_blackboards_summary(self) -> list[dict[str, Any]]:
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT board_number, content, updated_at
+                FROM blackboards
+                ORDER BY board_number
+                """
+            ).fetchall()
+
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            content = str(row["content"] or "")
+            result.append(
+                {
+                    "board_number": int(row["board_number"]),
+                    "has_content": bool(content),
+                    "preview": content[:100],
+                    "updated_at": str(row["updated_at"]),
+                }
+            )
+        return result
+
+
 def coerce_email_metadata(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
