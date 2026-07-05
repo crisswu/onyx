@@ -288,6 +288,54 @@ def _anthropic_omits_sampling_params(model_name: str) -> bool:
     )
 
 
+def _should_disable_dashscope_qwen_thinking_for_tool_calls(
+    *,
+    model_provider: str,
+    model_name: str,
+    api_base: str | None,
+    tools: list[dict] | None,
+    tool_choice: ToolChoiceOptions | None,
+) -> bool:
+    """DashScope Qwen thinking mode is not compatible with tool calling.
+
+    DashScope's OpenAI-compatible function-calling examples require
+    ``extra_body={"enable_thinking": False}`` for forced Qwen tool calls. Keep
+    this scoped to REQUIRED mode so AUTO tool flows can still stream Qwen's
+    reasoning and decide whether a follow-up tool such as open_url is needed.
+    """
+    if not tools:
+        return False
+    if tool_choice != ToolChoiceOptions.REQUIRED:
+        return False
+    if model_provider != LlmProviderNames.OPENAI_COMPATIBLE:
+        return False
+    if "qwen" not in model_name.lower():
+        return False
+    return bool(api_base and "dashscope.aliyuncs.com" in api_base.lower())
+
+
+def _with_extra_body_override(
+    passthrough_kwargs: dict[str, Any],
+    key: str,
+    value: Any,
+) -> dict[str, Any]:
+    existing_extra_body = passthrough_kwargs.get("extra_body") or {}
+    if not isinstance(existing_extra_body, dict):
+        logger.warning(
+            "Cannot add extra_body.%s because existing extra_body is not a dict (%s)",
+            key,
+            type(existing_extra_body).__name__,
+        )
+        return passthrough_kwargs
+
+    updated_kwargs = copy.deepcopy(passthrough_kwargs)
+    updated_kwargs["extra_body"] = {
+        **existing_extra_body,
+        key: value,
+    }
+    return updated_kwargs
+
+
 class LitellmLLM(LLM):
     """Uses Litellm library to allow easy configuration to use a multitude of LLMs
     See https://python.langchain.com/docs/integrations/chat/litellm"""
@@ -712,6 +760,19 @@ class LitellmLLM(LLM):
                         type(existing_extra_body).__name__,
                     )
 
+        if _should_disable_dashscope_qwen_thinking_for_tool_calls(
+            model_provider=self._model_provider,
+            model_name=self.config.model_name,
+            api_base=self._api_base,
+            tools=tools,
+            tool_choice=tool_choice,
+        ):
+            passthrough_kwargs = _with_extra_body_override(
+                passthrough_kwargs,
+                "enable_thinking",
+                False,
+            )
+
         try:
             # NOTE: must pass in None instead of empty strings otherwise litellm
             # can have some issues with bedrock.
@@ -880,6 +941,53 @@ class LitellmLLM(LLM):
             model_response = from_litellm_model_response(response)
 
             # Track LLM cost for Onyx-managed API keys
+            if model_response.usage:
+                self._track_llm_cost(model_response.usage)
+
+            return model_response
+        finally:
+            if client is not None:
+                client.close()
+
+    def invoke_non_stream(
+        self,
+        prompt: LanguageModelInput,
+        tools: list[dict] | None = None,
+        tool_choice: ToolChoiceOptions | None = None,
+        structured_response_format: dict | None = None,
+        timeout_override: int | None = None,
+        max_tokens: int | None = None,
+        reasoning_effort: ReasoningEffort = ReasoningEffort.AUTO,
+        user_identity: LLMUserIdentity | None = None,
+    ) -> ModelResponse:
+        from litellm import HTTPHandler
+        from litellm import ModelResponse as LiteLLMModelResponse
+
+        from onyx.llm.model_response import from_litellm_model_response
+
+        client = None
+        if is_true_openai_model(self.config.model_provider, self.config.model_name):
+            client = HTTPHandler(timeout=timeout_override or self._timeout)
+
+        try:
+            response = cast(
+                LiteLLMModelResponse,
+                self._completion(
+                    prompt=prompt,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    stream=False,
+                    structured_response_format=structured_response_format,
+                    timeout_override=timeout_override,
+                    max_tokens=max_tokens,
+                    parallel_tool_calls=True,
+                    reasoning_effort=reasoning_effort,
+                    user_identity=user_identity,
+                    client=client,
+                ),
+            )
+            model_response = from_litellm_model_response(response)
+
             if model_response.usage:
                 self._track_llm_cost(model_response.usage)
 

@@ -76,6 +76,7 @@ _XML_PARAMETER_RE = re.compile(
 )
 _FUNCTION_CALLS_OPEN_MARKER = "<function_calls"
 _FUNCTION_CALLS_CLOSE_MARKER = "</function_calls>"
+_PRE_TOOL_CONTENT_BUFFER_CHAR_LIMIT = 240
 
 
 class _XmlToolCallContentFilter:
@@ -376,6 +377,7 @@ def _extract_tool_call_kickoffs(
     turn_index: int,
     tab_index: int | None = None,
     sub_turn_index: int | None = None,
+    tab_index_start: int = 0,
 ) -> list[ToolCallKickoff]:
     """Extract ToolCallKickoff objects from the tool call map.
 
@@ -387,9 +389,10 @@ def _extract_tool_call_kickoffs(
         turn_index: The turn index for this set of tool calls
         tab_index: If provided, use this tab_index for all tool calls (otherwise auto-increment)
         sub_turn_index: The sub-turn index for nested tool calls
+        tab_index_start: First auto-assigned tab_index (default 0).
     """
     tool_calls: list[ToolCallKickoff] = []
-    tab_index_calculated = 0
+    tab_index_calculated = tab_index_start
     for tool_call_data in id_to_tool_call_map.values():
         if tool_call_data.get("id") and tool_call_data.get("name"):
             tool_args = _parse_tool_args_to_dict(tool_call_data.get("arguments"))
@@ -410,6 +413,45 @@ def _extract_tool_call_kickoffs(
             )
             tab_index_calculated += 1
     return tool_calls
+
+
+def _extract_tool_call_kickoffs_from_message_tool_calls(
+    message_tool_calls: Sequence[Any] | None,
+    turn_index: int,
+    tab_index: int | None = None,
+    sub_turn_index: int | None = None,
+) -> list[ToolCallKickoff]:
+    id_to_tool_call_map: dict[int, dict[str, Any]] = {}
+
+    for index, tool_call in enumerate(message_tool_calls or []):
+        function = getattr(tool_call, "function", None)
+        name = getattr(function, "name", None)
+        if not name:
+            continue
+
+        id_to_tool_call_map[index] = {
+            "id": getattr(tool_call, "id", None) or f"fallback_{uuid.uuid4().hex}",
+            "name": name,
+            "arguments": getattr(function, "arguments", None) or "",
+        }
+
+    return _extract_tool_call_kickoffs(
+        id_to_tool_call_map=id_to_tool_call_map,
+        turn_index=turn_index,
+        tab_index=tab_index,
+        sub_turn_index=sub_turn_index,
+    )
+
+
+def _get_non_stream_fallback_invoker(llm: LLM) -> Callable[..., Any] | None:
+    if not callable(getattr(type(llm), "invoke_non_stream", None)):
+        # Avoid MagicMock fabricating this attribute in unit tests while still
+        # allowing real wrapper/proxy objects to expose it dynamically.
+        if type(llm).__module__.startswith("unittest.mock"):
+            return None
+
+    invoker = getattr(llm, "invoke_non_stream", None)
+    return invoker if callable(invoker) else None
 
 
 def extract_tool_calls_from_response_text(
@@ -1135,10 +1177,17 @@ def run_llm_step_pkt_generator(
     accumulated_reasoning = ""
     accumulated_answer = ""
     accumulated_raw_answer = ""
+    pending_pre_tool_content = ""
+    defer_pre_tool_content = (
+        bool(tool_definitions)
+        and tool_choice != ToolChoiceOptions.NONE
+        and not is_deep_research
+    )
     stream_chunk_count = 0
     actionable_chunk_count = 0
     empty_chunk_count = 0
     finish_reasons: set[str] = set()
+    non_stream_fallback_attempted = False
     xml_tool_call_content_filter = _XmlToolCallContentFilter()
 
     processor_state: Any = None
@@ -1262,6 +1311,172 @@ def run_llm_step_pkt_generator(
                     obj=AgentResponseDelta(content=content_chunk),
                 )
 
+        def _handle_filtered_content(content_chunk: str) -> Generator[Packet, None, None]:
+            nonlocal pending_pre_tool_content
+            nonlocal defer_pre_tool_content
+
+            if defer_pre_tool_content:
+                pending_pre_tool_content += content_chunk
+                if (
+                    len(pending_pre_tool_content)
+                    <= _PRE_TOOL_CONTENT_BUFFER_CHAR_LIMIT
+                ):
+                    return
+
+                buffered_content = pending_pre_tool_content
+                pending_pre_tool_content = ""
+                defer_pre_tool_content = False
+                yield from _emit_content_chunk(buffered_content)
+                return
+
+            yield from _emit_content_chunk(content_chunk)
+
+        def _emit_pending_pre_tool_reasoning() -> Generator[Packet, None, None]:
+            nonlocal accumulated_reasoning
+            nonlocal pending_pre_tool_content
+            nonlocal reasoning_start
+
+            pending_reasoning = pending_pre_tool_content.strip()
+            pending_pre_tool_content = ""
+            if not pending_reasoning:
+                return
+
+            accumulated_reasoning += pending_reasoning
+            if state_container:
+                state_container.set_reasoning_tokens(accumulated_reasoning)
+            if not reasoning_start:
+                yield Packet(
+                    placement=_current_placement(),
+                    obj=ReasoningStart(),
+                )
+            yield Packet(
+                placement=_current_placement(),
+                obj=ReasoningDelta(reasoning=pending_reasoning),
+            )
+            reasoning_start = True
+            yield from _close_reasoning_if_active()
+
+        def _try_non_stream_fallback(reason: str) -> Generator[Packet, None, None]:
+            nonlocal accumulated_raw_answer
+            nonlocal accumulated_reasoning
+            nonlocal reasoning_start
+            nonlocal actionable_chunk_count
+            nonlocal first_action_recorded
+            nonlocal non_stream_fallback_attempted
+            nonlocal tool_calls
+
+            if non_stream_fallback_attempted:
+                return
+            non_stream_fallback_attempted = True
+
+            non_stream_fallback_invoker = _get_non_stream_fallback_invoker(llm)
+            if not non_stream_fallback_invoker:
+                logger.warning(
+                    "%s; no non-stream fallback invoker available. "
+                    "llm_type=%s, provider=%s, model=%s",
+                    reason,
+                    type(llm).__name__,
+                    llm.config.model_provider,
+                    llm.config.model_name,
+                )
+                return
+
+            logger.warning(
+                "%s; attempting non-stream fallback. chunks=%s, empty_chunks=%s, "
+                "finish_reasons=%s, provider=%s, model=%s, llm_type=%s",
+                reason,
+                stream_chunk_count,
+                empty_chunk_count,
+                sorted(finish_reasons),
+                llm.config.model_provider,
+                llm.config.model_name,
+                type(llm).__name__,
+            )
+            try:
+                fallback_response = non_stream_fallback_invoker(
+                    prompt=llm_msg_history,
+                    tools=tool_definitions,
+                    tool_choice=tool_choice,
+                    structured_response_format=None,
+                    max_tokens=max_tokens,
+                    reasoning_effort=reasoning_effort,
+                    user_identity=user_identity,
+                    timeout_override=timeout_override,
+                )
+            except Exception:
+                logger.exception(
+                    "Non-stream fallback failed after empty LLM step. "
+                    "provider=%s, model=%s",
+                    llm.config.model_provider,
+                    llm.config.model_name,
+                )
+                return
+
+            if fallback_response.usage:
+                usage = fallback_response.usage
+                span_generation.span_data.usage = {
+                    "input_tokens": usage.prompt_tokens,
+                    "output_tokens": usage.completion_tokens,
+                    "cache_read_input_tokens": usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+                }
+
+            if fallback_response.choice.finish_reason:
+                finish_reasons.add(str(fallback_response.choice.finish_reason))
+
+            fallback_message = fallback_response.choice.message
+            fallback_reasoning = fallback_message.reasoning_content or ""
+            fallback_content = fallback_message.content or ""
+            fallback_tool_calls = _extract_tool_call_kickoffs_from_message_tool_calls(
+                message_tool_calls=fallback_message.tool_calls,
+                turn_index=turn_index,
+                tab_index=tab_index if use_existing_tab_index else None,
+                sub_turn_index=sub_turn_index,
+            )
+
+            if fallback_reasoning or fallback_content or fallback_tool_calls:
+                actionable_chunk_count += 1
+                if not first_action_recorded:
+                    span_generation.span_data.time_to_first_action_seconds = (
+                        time.monotonic() - stream_start_time
+                    )
+                    first_action_recorded = True
+            else:
+                logger.warning(
+                    "Non-stream fallback also returned no content or tool calls. "
+                    "finish_reason=%s, provider=%s, model=%s",
+                    fallback_response.choice.finish_reason,
+                    llm.config.model_provider,
+                    llm.config.model_name,
+                )
+                return
+
+            if fallback_reasoning:
+                accumulated_reasoning += fallback_reasoning
+                if state_container:
+                    state_container.set_reasoning_tokens(accumulated_reasoning)
+                if not reasoning_start:
+                    yield Packet(
+                        placement=_current_placement(),
+                        obj=ReasoningStart(),
+                    )
+                yield Packet(
+                    placement=_current_placement(),
+                    obj=ReasoningDelta(reasoning=fallback_reasoning),
+                )
+                reasoning_start = True
+
+            if fallback_tool_calls:
+                yield from _close_reasoning_if_active()
+                tool_calls = fallback_tool_calls
+
+            if fallback_content:
+                accumulated_raw_answer += fallback_content
+                filtered_content = xml_tool_call_content_filter.process(fallback_content)
+                filtered_content += xml_tool_call_content_filter.flush()
+                if filtered_content and not fallback_tool_calls:
+                    yield from _emit_content_chunk(filtered_content)
+
         for packet in llm.stream(
             prompt=llm_msg_history,
             tools=tool_definitions,
@@ -1341,11 +1556,12 @@ def run_llm_step_pkt_generator(
 
             if delta.content:
                 # Keep raw content for fallback extraction. Display content can be
-                # filtered and, in deep-research REQUIRED mode, routed as reasoning.
+                # filtered, routed as reasoning, or deferred until we know whether
+                # this assistant turn is actually a tool-call turn.
                 accumulated_raw_answer += delta.content
                 filtered_content = xml_tool_call_content_filter.process(delta.content)
                 if filtered_content:
-                    yield from _emit_content_chunk(filtered_content)
+                    yield from _handle_filtered_content(filtered_content)
 
             if delta.tool_calls:
                 yield from _close_reasoning_if_active()
@@ -1363,7 +1579,7 @@ def run_llm_step_pkt_generator(
         # Flush any tail text buffered while checking for split "<function_calls" markers.
         filtered_content_tail = xml_tool_call_content_filter.flush()
         if filtered_content_tail:
-            yield from _emit_content_chunk(filtered_content_tail)
+            yield from _handle_filtered_content(filtered_content_tail)
 
         # Flush custom token processor to get any final tool calls
         if custom_token_processor:
@@ -1381,12 +1597,41 @@ def run_llm_step_pkt_generator(
                 for tool_call_delta in flush_delta.tool_calls:
                     _update_tool_call_with_delta(id_to_tool_call_map, tool_call_delta)
 
+        if pending_pre_tool_content and id_to_tool_call_map:
+            yield from _emit_pending_pre_tool_reasoning()
+
+        # Narration emitted before these tool calls occupies the base tab; start
+        # tool calls at the next tab so they render as their own group instead of
+        # merging with the narration.
+        tab_index_start = 1 if (answer_start and not use_existing_tab_index) else 0
         tool_calls = _extract_tool_call_kickoffs(
             id_to_tool_call_map=id_to_tool_call_map,
             turn_index=turn_index,
             tab_index=tab_index if use_existing_tab_index else None,
             sub_turn_index=sub_turn_index,
+            tab_index_start=tab_index_start,
         )
+
+        if (
+            actionable_chunk_count == 0
+            and not tool_calls
+            and not accumulated_answer.strip()
+            and not accumulated_raw_answer.strip()
+        ):
+            yield from _try_non_stream_fallback(
+                "LLM stream completed with no actionable deltas"
+            )
+
+        if pending_pre_tool_content:
+            if tool_calls:
+                logger.debug(
+                    "Suppressing %d chars of pre-tool assistant content.",
+                    len(pending_pre_tool_content),
+                )
+            else:
+                yield from _emit_content_chunk(pending_pre_tool_content)
+            pending_pre_tool_content = ""
+
         # Run the flush + recovery below while the span is still open, so the
         # span output recorded afterward reflects the answer the user received.
         yield from _close_reasoning_if_active()
@@ -1444,6 +1689,11 @@ def run_llm_step_pkt_generator(
             accumulated_answer = accumulated_raw_answer
             if state_container:
                 state_container.set_answer_tokens(accumulated_answer)
+
+        if not tool_calls and not accumulated_answer.strip():
+            yield from _try_non_stream_fallback(
+                "LLM step completed with no final answer or tool calls"
+            )
 
         # Record assistant output for tracing (after flush + recovery).
         if tool_calls:
