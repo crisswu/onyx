@@ -7,3 +7,4 @@ export function isBlackboardAllowedUser(
 ): boolean {
   return user?.email?.toLowerCase() === BLACKBOARD_ALLOWED_EMAIL;
 }
+

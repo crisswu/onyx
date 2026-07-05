@@ -111,3 +111,4 @@ def save_blackboard(
         message="保存成功",
         updated_at=updated_at,
     )
+

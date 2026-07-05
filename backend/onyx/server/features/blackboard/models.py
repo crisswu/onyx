@@ -32,3 +32,4 @@ class BlackboardSaveResponse(BaseModel):
     success: bool
     message: str
     updated_at: str
+

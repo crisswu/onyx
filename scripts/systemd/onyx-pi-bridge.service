@@ -1,0 +1,27 @@
+[Unit]
+Description=Onyx Pi Bridge on host
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HOME=/home/criss
+Environment=PI_BRIDGE_HOST=172.19.0.1
+Environment=PI_BRIDGE_PORT=8787
+Environment=PI_BINARY=/home/criss/Pi/pi
+Environment=PI_WORKSPACE=/home/criss/pi-workspace
+Environment=PI_PROVIDER=qwen
+Environment=PI_MODEL=qwen3.7-plus
+Environment=PI_SESSION_DIR=/home/criss/Pi/.pi/agent/onyx-sessions
+Environment=PI_CODING_AGENT_DIR=/home/criss/Pi/.pi/agent
+Environment=PI_MAX_SESSIONS=20
+Environment=PI_SESSION_IDLE_TIMEOUT_MS=1800000
+Environment=PI_STREAM_IDLE_TIMEOUT_MS=90000
+WorkingDirectory=/home/criss/pi-workspace
+ExecStartPre=/usr/bin/mkdir -p /home/criss/pi-workspace /home/criss/Pi/.pi/agent/onyx-sessions
+ExecStart=/usr/bin/node /home/criss/onyx/pi_bridge/server.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

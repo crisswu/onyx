@@ -50,3 +50,4 @@ export async function saveBlackboard({
   });
   return readJsonOrThrow<BlackboardSaveResponse>(response);
 }
+
