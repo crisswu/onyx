@@ -988,12 +988,15 @@ class EvaRssDB:
             if latest_row and latest_row["latest_success_at"] is not None
             else None
         )
-        status = "ok" if limited else "insufficient"
         latest_dt = _parse_datetime(latest_success_at)
         if latest_dt is None:
-            status = "stale" if not limited else "ok"
+            status = "stale"
         elif now_dt - latest_dt > timedelta(hours=24):
-            status = "stale" if not limited else "ok"
+            status = "stale"
+        elif limited:
+            status = "ok"
+        else:
+            status = "insufficient"
 
         return RssSearchResponse(
             results=limited,

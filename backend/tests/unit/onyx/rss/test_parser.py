@@ -29,6 +29,23 @@ def test_discover_feed_candidates_from_html() -> None:
     ]
 
 
+def test_discover_feed_candidates_ignores_unsupported_json_feed() -> None:
+    html = """
+    <html>
+      <head>
+        <link
+          rel="alternate"
+          type="application/feed+json"
+          title="JSON Feed"
+          href="/feed.json"
+        />
+      </head>
+    </html>
+    """
+
+    assert discover_feed_candidates(html, "https://example.com/blog") == []
+
+
 def test_parse_rss_feed_handles_basic_entry() -> None:
     feed = """
     <rss version="2.0">

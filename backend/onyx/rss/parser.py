@@ -74,7 +74,6 @@ def discover_feed_candidates(html: str, page_url: str) -> list[FeedCandidate]:
         if link_type not in {
             "application/rss+xml",
             "application/atom+xml",
-            "application/feed+json",
             "text/xml",
             "application/xml",
         }:
