@@ -1,7 +1,7 @@
 """seed_eva_rss_tools
 
 Revision ID: a7d4c9e2f1b8
-Revises: 9c8b7a6d5e4f
+Revises: 0d6fd0f2f641
 Create Date: 2026-07-09 11:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "a7d4c9e2f1b8"
-down_revision = "9c8b7a6d5e4f"
+down_revision = "0d6fd0f2f641"
 branch_labels = None
 depends_on = None
 
