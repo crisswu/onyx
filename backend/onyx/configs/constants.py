@@ -646,6 +646,10 @@ class OnyxCeleryTask:
     SCHEDULED_TASKS_RUN = "scheduled_tasks_run"
     SCHEDULED_TASKS_CLEANUP_STUCK = "scheduled_tasks_cleanup_stuck"
 
+    # EVA RSS intake
+    CHECK_EVA_RSS_FETCH = "check_eva_rss_fetch"
+    EVA_RSS_FETCH_SUBSCRIPTION = "eva_rss_fetch_subscription"
+
     CHECK_FOR_DOCUMENTS_FOR_OPENSEARCH_MIGRATION_TASK = (
         "check_for_documents_for_opensearch_migration_task"
     )

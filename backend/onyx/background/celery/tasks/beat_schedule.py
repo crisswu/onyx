@@ -177,6 +177,16 @@ beat_task_templates: list[dict] = [
             "queue": OnyxCeleryQueues.PRIMARY,
         },
     },
+    {
+        "name": "check-eva-rss-fetch",
+        "task": OnyxCeleryTask.CHECK_EVA_RSS_FETCH,
+        "schedule": timedelta(hours=1),
+        "options": {
+            "priority": OnyxCeleryPriority.LOW,
+            "expires": BEAT_EXPIRES_DEFAULT,
+            "queue": OnyxCeleryQueues.PRIMARY,
+        },
+    },
     # Sandbox sweep: background-snapshot changed sessions, sleep idle sandboxes.
     {
         "name": "cleanup-idle-sandboxes",

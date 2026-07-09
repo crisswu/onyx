@@ -45,6 +45,10 @@ from onyx.tools.tool_implementations.eva_knowledge import UpdateNoteTool
 from onyx.tools.tool_implementations.eva_personal import EmailManagerTool
 from onyx.tools.tool_implementations.eva_personal import RecallMemoryTool
 from onyx.tools.tool_implementations.eva_personal import ScheduleReminderTool
+from onyx.tools.tool_implementations.eva_rss import AddRssSubscriptionTool
+from onyx.tools.tool_implementations.eva_rss import ListRssSubscriptionsTool
+from onyx.tools.tool_implementations.eva_rss import SearchRssArticlesTool
+from onyx.tools.tool_implementations.eva_rss import UpdateRssSubscriptionTool
 from onyx.tools.tool_implementations.file_reader.file_reader_tool import FileReaderTool
 from onyx.tools.tool_implementations.images.image_generation_tool import (
     ImageGenerationTool,
@@ -70,6 +74,10 @@ EVA_KNOWLEDGE_TOOL_CLASSES = (
     ScheduleReminderTool,
     EmailManagerTool,
     ExecuteBashTool,
+    AddRssSubscriptionTool,
+    ListRssSubscriptionsTool,
+    UpdateRssSubscriptionTool,
+    SearchRssArticlesTool,
 )
 
 

@@ -13,6 +13,10 @@ from onyx.tools.tool_implementations.eva_knowledge import UpdateNoteTool
 from onyx.tools.tool_implementations.eva_personal import EmailManagerTool
 from onyx.tools.tool_implementations.eva_personal import RecallMemoryTool
 from onyx.tools.tool_implementations.eva_personal import ScheduleReminderTool
+from onyx.tools.tool_implementations.eva_rss import AddRssSubscriptionTool
+from onyx.tools.tool_implementations.eva_rss import ListRssSubscriptionsTool
+from onyx.tools.tool_implementations.eva_rss import SearchRssArticlesTool
+from onyx.tools.tool_implementations.eva_rss import UpdateRssSubscriptionTool
 from onyx.tools.tool_implementations.file_reader.file_reader_tool import FileReaderTool
 from onyx.tools.tool_implementations.images.image_generation_tool import (
     ImageGenerationTool,
@@ -49,6 +53,10 @@ BUILT_IN_TOOL_TYPES = Union[
     ScheduleReminderTool,
     EmailManagerTool,
     ExecuteBashTool,
+    AddRssSubscriptionTool,
+    ListRssSubscriptionsTool,
+    UpdateRssSubscriptionTool,
+    SearchRssArticlesTool,
 ]
 
 BUILT_IN_TOOL_MAP: dict[str, Type[BUILT_IN_TOOL_TYPES]] = {
@@ -70,6 +78,10 @@ BUILT_IN_TOOL_MAP: dict[str, Type[BUILT_IN_TOOL_TYPES]] = {
     ScheduleReminderTool.__name__: ScheduleReminderTool,
     EmailManagerTool.__name__: EmailManagerTool,
     ExecuteBashTool.__name__: ExecuteBashTool,
+    AddRssSubscriptionTool.__name__: AddRssSubscriptionTool,
+    ListRssSubscriptionsTool.__name__: ListRssSubscriptionsTool,
+    UpdateRssSubscriptionTool.__name__: UpdateRssSubscriptionTool,
+    SearchRssArticlesTool.__name__: SearchRssArticlesTool,
 }
 
 STOPPING_TOOLS_NAMES: list[str] = [ImageGenerationTool.NAME]
