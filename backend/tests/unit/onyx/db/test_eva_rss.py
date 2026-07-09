@@ -151,9 +151,16 @@ def test_eva_rss_search_source_filter_matches_subscription_name(
     )
 
     response = db.search_articles(
-        "特朗普",
+        "要闻",
         sources=["中国新闻网要闻导读"],
     )
 
     assert len(response.results) == 1
     assert response.results[0].title == "特朗普称将要求最高法院重审案件"
+
+    wildcard_response = db.search_articles(
+        "*",
+        sources=["中国新闻网要闻导读"],
+    )
+
+    assert len(wildcard_response.results) == 1

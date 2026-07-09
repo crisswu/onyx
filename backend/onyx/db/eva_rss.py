@@ -170,6 +170,8 @@ def _keyword_terms(query: str) -> list[str]:
     normalized = query.strip()
     if not normalized:
         return []
+    if normalized.lower() in {"*", "all", "全部"}:
+        return []
 
     terms = [normalized]
     terms.extend(term for term in normalized.split() if term)
@@ -932,6 +934,9 @@ class EvaRssDB:
                 "title": str(row["title"] or ""),
                 "summary": str(row["summary"] or ""),
                 "full_text": str(row["full_text"] or ""),
+                "source": " ".join(seen_sources + subscription_names),
+                "category": feed_category or "",
+                "tags": " ".join(feed_tags),
             }
             keyword_score = self._keyword_score(terms, text_fields)
             if terms and keyword_score <= 0:
@@ -1016,12 +1021,19 @@ class EvaRssDB:
         if not terms:
             return 0.0
         score = 0.0
-        weights = {"title": 4.0, "summary": 2.0, "full_text": 1.0}
+        weights = {
+            "title": 4.0,
+            "summary": 2.0,
+            "full_text": 1.0,
+            "source": 0.75,
+            "category": 0.75,
+            "tags": 0.75,
+        }
         for field, text in fields.items():
             lowered = text.lower()
             for term in terms:
                 if term in lowered:
-                    score += weights[field]
+                    score += weights.get(field, 1.0)
         return score
 
     def _match_reason(self, terms: list[str], fields: dict[str, str]) -> str:
