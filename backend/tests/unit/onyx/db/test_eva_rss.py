@@ -130,3 +130,30 @@ def test_eva_rss_search_defaults_and_excludes_disabled_sources(
     )
 
     assert any(result.primary_source == "Disabled" for result in with_disabled.results)
+
+
+def test_eva_rss_search_source_filter_matches_subscription_name(
+    tmp_path: Path,
+) -> None:
+    db = EvaRssDB(db_path=tmp_path / "rss.db")
+    subscription = db.add_subscription(
+        name="中国新闻网要闻导读",
+        feed_url="https://www.chinanews.com.cn/rss/importnews.xml",
+    )
+    db.upsert_article(
+        subscription,
+        RssArticleInput(
+            title="特朗普称将要求最高法院重审案件",
+            canonical_url="https://www.chinanews.com/example",
+            source_name="中新网要闻导读",
+            summary="中新网7月9日电 国际新闻。",
+        ),
+    )
+
+    response = db.search_articles(
+        "特朗普",
+        sources=["中国新闻网要闻导读"],
+    )
+
+    assert len(response.results) == 1
+    assert response.results[0].title == "特朗普称将要求最高法院重审案件"

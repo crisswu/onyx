@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
 from importlib import import_module
 from typing import Any
+
+import requests
 
 from onyx.db.eva_rss import EvaRssDB
 from onyx.db.eva_rss import RssArticleInput
@@ -41,7 +44,29 @@ def fetch_text(url: str, *, timeout: float = RSS_FETCH_TIMEOUT_SECONDS) -> str:
         allow_private_network=_rss_allow_private_network(),
     )
     response.raise_for_status()
-    return response.text
+    return _decoded_response_text(response)
+
+
+def _decoded_response_text(response: requests.Response) -> str:
+    encoding = response.encoding
+    if encoding and encoding.lower() not in {"iso-8859-1", "latin-1"}:
+        return response.text
+
+    declared_encoding = _xml_declared_encoding(response.content[:256])
+    fallback_encoding = (
+        declared_encoding or response.apparent_encoding or encoding or "utf-8"
+    )
+    try:
+        return response.content.decode(fallback_encoding)
+    except (LookupError, UnicodeDecodeError):
+        return response.content.decode("utf-8", errors="replace")
+
+
+def _xml_declared_encoding(prefix: bytes) -> str | None:
+    match = re.search(br"<\?xml[^>]*encoding=[\"']([^\"']+)[\"']", prefix, re.I)
+    if match is None:
+        return None
+    return match.group(1).decode("ascii", errors="ignore") or None
 
 
 def _rss_allow_private_network() -> bool:

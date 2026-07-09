@@ -885,6 +885,7 @@ class EvaRssDB:
             SELECT
                 a.*,
                 GROUP_CONCAT(DISTINCT src.source_name) AS seen_sources,
+                GROUP_CONCAT(DISTINCT s.name) AS subscription_names,
                 COUNT(DISTINCT src.subscription_id) AS source_count,
                 MAX(s.priority_weight) AS max_priority_weight,
                 MAX(s.last_success_at) AS latest_success_at
@@ -913,13 +914,18 @@ class EvaRssDB:
                 for source in str(row["seen_sources"] or "").split(",")
                 if source
             ]
+            subscription_names = [
+                source
+                for source in str(row["subscription_names"] or "").split(",")
+                if source
+            ]
             if categories_set and (feed_category or "").lower() not in categories_set:
                 continue
             if tags_set and not tags_set.intersection({tag.lower() for tag in feed_tags}):
                 continue
-            if sources_set and not sources_set.intersection(
-                {source.lower() for source in seen_sources}
-            ):
+            searchable_sources = {source.lower() for source in seen_sources}
+            searchable_sources.update(source.lower() for source in subscription_names)
+            if sources_set and not sources_set.intersection(searchable_sources):
                 continue
 
             text_fields = {

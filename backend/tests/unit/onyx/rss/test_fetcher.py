@@ -4,11 +4,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from requests import Response
 
 from onyx.db.eva_rss import EvaRssDB
 from onyx.rss import fetcher
 from onyx.rss.fetcher import MAX_ARTICLE_EXTRACTIONS_PER_FETCH
 from onyx.rss.fetcher import MAX_FEED_ENTRIES_PER_FETCH
+from onyx.rss.fetcher import _decoded_response_text
 from onyx.rss.fetcher import _rss_allow_private_network
 from onyx.rss.fetcher import discover_or_parse_feed
 from onyx.rss.fetcher import fetch_subscription_now
@@ -39,6 +41,18 @@ def test_rss_blocks_private_network_by_default(
     )
 
     assert _rss_allow_private_network() is False
+
+
+def test_decoded_response_text_honors_xml_declared_encoding() -> None:
+    response = Response()
+    response.status_code = 200
+    response.headers["content-type"] = "text/xml"
+    response.encoding = "ISO-8859-1"
+    response._content = (
+        '<?xml version="1.0" encoding="utf-8"?><rss><title>中国新闻</title></rss>'
+    ).encode("utf-8")
+
+    assert "中国新闻" in _decoded_response_text(response)
 
 
 def test_discover_or_parse_feed_returns_error_for_fetch_failure(
