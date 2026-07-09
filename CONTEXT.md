@@ -12,6 +12,46 @@ _Avoid_: Product-wide news index, shared feed reader
 An RSS or Atom source that the user asks EVA to maintain as part of the personal information pool. In the first version, EVA manages feed subscriptions through tools, and the subscriptions are stored locally rather than edited by hand in a static config file. A subscription has a default 12-hour fetch cadence and may define its own cadence, with a minimum of 1 hour.
 _Avoid_: Static feed config, admin feed record
 
+**Default Subscription Bundle**:
+A curated starter set of feed subscriptions that initializes EVA's personal information pool before the user adds custom sources. The first bundle is small and high-signal, around 12 sources, uses a bilingual strategy, and attempts an immediate first fetch for each source without letting individual fetch failures block initialization.
+_Avoid_: Exhaustive feed list, one-language feed pack
+
+**General-News Source**:
+A broad news feed included to give EVA awareness of major non-technical events without letting general news dominate the personal information pool. The default subscription bundle includes exactly one domestic general-news source and one international general-news source.
+_Avoid_: News-heavy bundle, many hot-search feeds
+
+**Developer Signal Source**:
+A feed whose value is early attention from builders rather than formal editorial coverage. Hacker News belongs in this category in the default subscription bundle and should be interpreted as a trend signal, not as a verified news authority.
+_Avoid_: Treating social heat as confirmed news
+
+**Official Change Source**:
+A feed that publishes product, API, platform, or ecosystem changes directly from the maintainer. GitHub Changelog is included in the default subscription bundle because it is more actionable than the broader GitHub Blog feed.
+_Avoid_: Broad company blog as the primary change feed
+
+**Engineering Practice Source**:
+A feed that publishes technical implementation, architecture, reliability, or engineering process material from a credible practitioner organization. GitHub Engineering is included in the default subscription bundle as an engineering practice source.
+_Avoid_: Marketing blog, generic company news
+
+**Research Signal Source**:
+A feed whose value is early research direction rather than polished news or implementation guidance. The default subscription bundle includes one research signal source, arXiv `cs.AI`, to avoid letting high-volume paper feeds dominate local article search.
+_Avoid_: Paper-heavy default bundle
+
+**Technology Media Source**:
+A formal editorial feed covering technology, startups, AI, platforms, or the technology industry. The default subscription bundle includes a small number of technology media sources so they complement, rather than drown out, developer and research signal sources.
+_Avoid_: Large media bundle, lifestyle gadget feed pile
+
+**Domestic Technology Source**:
+A Chinese-language technology or startup feed included for local technology, product, financing, and market context. The default subscription bundle includes 36Kr as the only domestic technology source in the first version.
+_Avoid_: Many overlapping Chinese tech media feeds
+
+**Trending Code Source**:
+A feed or generated feed that tracks popular repositories or open-source project momentum. Trending code sources are excluded from the first default subscription bundle because common options depend on third-party scraping or RSSHub-style routes rather than official RSS feeds.
+_Avoid_: Unofficial GitHub Trending feed in the starter bundle
+
+**Security News Source**:
+A feed focused on vulnerabilities, exploits, or software supply-chain security. Security news sources are excluded from the first default subscription bundle because the user wants technology and general awareness without turning the starter RSS pool into a vulnerability feed.
+_Avoid_: CVE-heavy starter bundle
+
 **Feed Candidate**:
 A possible RSS or Atom feed discovered from a user-provided website URL before it becomes a feed subscription. A single candidate can be subscribed automatically; if more than one candidate exists, EVA asks the user which one to subscribe to.
 _Avoid_: Scraped source, guessed subscription

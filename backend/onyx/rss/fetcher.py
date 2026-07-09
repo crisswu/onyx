@@ -13,7 +13,7 @@ from onyx.rss.parser import canonicalize_url
 from onyx.rss.parser import content_hash
 from onyx.rss.parser import discover_feed_candidates
 from onyx.rss.parser import parse_feed
-from onyx.server.security.models import outbound_allow_private_network
+from onyx.server.security.models import SSRFProtectionLevel
 from onyx.server.security.store import get_security_settings
 from onyx.utils.url import ssrf_safe_get
 
@@ -38,12 +38,18 @@ def fetch_text(url: str, *, timeout: float = RSS_FETCH_TIMEOUT_SECONDS) -> str:
         headers=RSS_FETCH_HEADERS,
         timeout=(RSS_FETCH_CONNECT_TIMEOUT_SECONDS, timeout),
         follow_redirects=True,
-        allow_private_network=outbound_allow_private_network(
-            get_security_settings().ssrf_protection_level
-        ),
+        allow_private_network=_rss_allow_private_network(),
     )
     response.raise_for_status()
     return response.text
+
+
+def _rss_allow_private_network() -> bool:
+    level = get_security_settings().ssrf_protection_level
+    return level in {
+        SSRFProtectionLevel.ALLOW_PRIVATE_NETWORK,
+        SSRFProtectionLevel.DISABLED,
+    }
 
 
 def discover_or_parse_feed(url: str) -> tuple[list[FeedCandidate], str | None]:

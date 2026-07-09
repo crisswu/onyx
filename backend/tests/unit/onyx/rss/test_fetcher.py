@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,8 +9,36 @@ from onyx.db.eva_rss import EvaRssDB
 from onyx.rss import fetcher
 from onyx.rss.fetcher import MAX_ARTICLE_EXTRACTIONS_PER_FETCH
 from onyx.rss.fetcher import MAX_FEED_ENTRIES_PER_FETCH
+from onyx.rss.fetcher import _rss_allow_private_network
 from onyx.rss.fetcher import discover_or_parse_feed
 from onyx.rss.fetcher import fetch_subscription_now
+from onyx.server.security.models import SSRFProtectionLevel
+
+
+def test_rss_allows_private_network_when_operator_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fetcher,
+        "get_security_settings",
+        lambda: SimpleNamespace(
+            ssrf_protection_level=SSRFProtectionLevel.ALLOW_PRIVATE_NETWORK
+        ),
+    )
+
+    assert _rss_allow_private_network() is True
+
+
+def test_rss_blocks_private_network_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        fetcher,
+        "get_security_settings",
+        lambda: SimpleNamespace(ssrf_protection_level=SSRFProtectionLevel.VALIDATE_ALL),
+    )
+
+    assert _rss_allow_private_network() is False
 
 
 def test_discover_or_parse_feed_returns_error_for_fetch_failure(
