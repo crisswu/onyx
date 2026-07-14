@@ -4,6 +4,7 @@ from typing import Union
 from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
     CodingAgentTool,
 )
+from onyx.tools.tool_implementations.eva_backup import BackupEvaDataToOssTool
 from onyx.tools.tool_implementations.eva_bash import ExecuteBashTool
 from onyx.tools.tool_implementations.eva_knowledge import DeleteNoteTool
 from onyx.tools.tool_implementations.eva_knowledge import ListNotesTool
@@ -53,6 +54,7 @@ BUILT_IN_TOOL_TYPES = Union[
     ScheduleReminderTool,
     EmailManagerTool,
     ExecuteBashTool,
+    BackupEvaDataToOssTool,
     AddRssSubscriptionTool,
     ListRssSubscriptionsTool,
     UpdateRssSubscriptionTool,
@@ -78,6 +80,7 @@ BUILT_IN_TOOL_MAP: dict[str, Type[BUILT_IN_TOOL_TYPES]] = {
     ScheduleReminderTool.__name__: ScheduleReminderTool,
     EmailManagerTool.__name__: EmailManagerTool,
     ExecuteBashTool.__name__: ExecuteBashTool,
+    BackupEvaDataToOssTool.__name__: BackupEvaDataToOssTool,
     AddRssSubscriptionTool.__name__: AddRssSubscriptionTool,
     ListRssSubscriptionsTool.__name__: ListRssSubscriptionsTool,
     UpdateRssSubscriptionTool.__name__: UpdateRssSubscriptionTool,

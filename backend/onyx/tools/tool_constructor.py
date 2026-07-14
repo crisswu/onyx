@@ -36,6 +36,7 @@ from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
 from onyx.tools.tool_implementations.custom.custom_tool import (
     build_custom_tools_from_openapi_schema_and_headers,
 )
+from onyx.tools.tool_implementations.eva_backup import BackupEvaDataToOssTool
 from onyx.tools.tool_implementations.eva_bash import ExecuteBashTool
 from onyx.tools.tool_implementations.eva_knowledge import DeleteNoteTool
 from onyx.tools.tool_implementations.eva_knowledge import ListNotesTool
@@ -74,6 +75,7 @@ EVA_KNOWLEDGE_TOOL_CLASSES = (
     ScheduleReminderTool,
     EmailManagerTool,
     ExecuteBashTool,
+    BackupEvaDataToOssTool,
     AddRssSubscriptionTool,
     ListRssSubscriptionsTool,
     UpdateRssSubscriptionTool,
@@ -355,6 +357,21 @@ def _construct_tools_impl(
                 if tool_cls.__name__ == ExecuteBashTool.__name__:
                     tool_dict[db_tool_model.id] = [
                         tool_cls(tool_id=db_tool_model.id, emitter=emitter)
+                    ]
+                elif tool_cls.__name__ == BackupEvaDataToOssTool.__name__:
+                    user_email = user.email if not user.is_anonymous else None
+                    if not BackupEvaDataToOssTool.is_user_authorized(user_email):
+                        logger.debug(
+                            "Skipping EVA backup tool for non-owner user %s",
+                            user_email or "<anonymous>",
+                        )
+                        continue
+                    tool_dict[db_tool_model.id] = [
+                        tool_cls(
+                            tool_id=db_tool_model.id,
+                            emitter=emitter,
+                            user_email=user_email,
+                        )
                     ]
                 else:
                     tool_dict[db_tool_model.id] = [

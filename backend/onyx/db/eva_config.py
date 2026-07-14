@@ -7,10 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_EVA_TOOLS_CONFIG_PATH = Path("/app/config/eva_tools_config.json")
 DEFAULT_EVA_OWNER_EMAIL = "30939235@qq.com"
 DEFAULT_EVA_USER_DATA_SUBDIR = "users"
+
+
+@dataclass(frozen=True)
+class AliyunOssBackupConfig:
+    endpoint: str
+    bucket: str
+    access_key_id: str
+    access_key_secret: str
+    prefix: str
 
 
 @dataclass(frozen=True)
@@ -20,6 +28,7 @@ class EvaToolsConfig:
     conversation_db_path: Path | None = None
     owner_email: str = DEFAULT_EVA_OWNER_EMAIL
     user_data_root: Path | None = None
+    aliyun_oss_backup: AliyunOssBackupConfig | None = None
 
 
 def _config_path() -> Path:
@@ -44,6 +53,54 @@ def _resolve_path(raw_value: Any, base_dir: Path | None = None) -> Path | None:
 def _normalize_user_key(user_key: str | None) -> str:
     normalized = (user_key or "").strip().lower()
     return normalized or "anonymous"
+
+
+def _optional_str(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    value = str(raw_value).strip()
+    return value or None
+
+
+def _parse_aliyun_oss_backup_config(raw_value: Any) -> AliyunOssBackupConfig | None:
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, dict):
+        raise ValueError("aliyun_oss_backup config must be a JSON object")
+
+    endpoint = _optional_str(raw_value.get("endpoint"))
+    bucket = _optional_str(raw_value.get("bucket"))
+    access_key_id = _optional_str(raw_value.get("access_key_id"))
+    access_key_secret = _optional_str(raw_value.get("access_key_secret"))
+    prefix = _optional_str(raw_value.get("prefix"))
+
+    if not any([endpoint, bucket, access_key_id, access_key_secret, prefix]):
+        return None
+
+    missing_fields = [
+        field
+        for field, value in [
+            ("endpoint", endpoint),
+            ("bucket", bucket),
+            ("access_key_id", access_key_id),
+            ("access_key_secret", access_key_secret),
+            ("prefix", prefix),
+        ]
+        if value is None
+    ]
+    if missing_fields:
+        raise ValueError(
+            "aliyun_oss_backup config is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    return AliyunOssBackupConfig(
+        endpoint=endpoint,
+        bucket=bucket,
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
+        prefix=prefix.rstrip("/"),
+    )
 
 
 def _safe_user_dir_name(user_key: str | None) -> str:
@@ -78,6 +135,9 @@ def get_eva_tools_config() -> EvaToolsConfig:
         raw_config.get("user_data_root") or raw_config.get("user_data_dir"),
         data_dir,
     )
+    aliyun_oss_backup = _parse_aliyun_oss_backup_config(
+        raw_config.get("aliyun_oss_backup")
+    )
 
     if data_dir is not None:
         if knowledge_db_path is None:
@@ -93,6 +153,7 @@ def get_eva_tools_config() -> EvaToolsConfig:
         conversation_db_path=conversation_db_path,
         owner_email=owner_email,
         user_data_root=user_data_root,
+        aliyun_oss_backup=aliyun_oss_backup,
     )
 
 
@@ -114,7 +175,13 @@ def get_eva_tools_config_for_user(user_key: str | None) -> EvaToolsConfig:
         conversation_db_path=user_data_dir / "conversation.db",
         owner_email=config.owner_email,
         user_data_root=config.user_data_root,
+        aliyun_oss_backup=config.aliyun_oss_backup,
     )
+
+
+def get_eva_backup_config() -> EvaToolsConfig:
+    """Return the owner-scoped EVA config used for backup operations."""
+    return get_eva_tools_config()
 
 
 def get_eva_knowledge_db_path() -> Path | None:

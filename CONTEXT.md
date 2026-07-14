@@ -104,6 +104,18 @@ _Avoid_: Silent feed failure, auto-disabled feed
 The local SQLite-backed storage used by EVA-specific personal data in the current installation. RSS subscriptions and articles for the first version live in this store and are accessed through database interfaces under `backend/onyx/db`. RSS data is isolated by EVA user key, matching the existing owner/default data directory and per-user data directory pattern. The first version's scheduled RSS fetch covers only the owner/default store; per-user scheduled fetching is deferred.
 _Avoid_: Onyx product database, shared tenant data store
 
+**EVA Data Backup**:
+A user-requested preservation copy of EVA's core local databases, limited to the owner/default local knowledge database and conversation database for `30939235@qq.com`. Each backup is made from a consistent SQLite snapshot rather than by uploading the live database files directly, and only the owner account may trigger it. It preserves EVA memory and conversation data only; it is not a full Onyx system backup, not a restore operation, and does not include arbitrary files, other users' stores, Postgres-backed product configuration, credentials, logs, or RSS data unless explicitly redefined later.
+_Avoid_: General file upload, server backup, OSS file manager, full system restore, automated restore
+
+**EVA Backup Set**:
+A timestamped, non-overwriting group of EVA data backup objects containing `knowledge.db`, `conversation.db`, and a manifest that records creation time, owner identity, file sizes, and hashes. Backup sets are created only when the owner explicitly asks EVA to back up its data, without a second confirmation prompt, and are kept as separate historical versions rather than replacing the previous backup. A backup set is considered successful only when both database snapshots and the manifest have been uploaded, and is reported by OSS object keys rather than public download links.
+_Avoid_: Latest-only backup, overwritten backup file, scheduled backup, partial successful backup, confirmation-gated backup, public backup URL
+
+**EVA Backup Destination**:
+The Aliyun OSS bucket and prefix where EVA data backup sets are uploaded. In the personal deployment, this destination is configured in EVA's local tool configuration file rather than managed through the Onyx UI or product database.
+_Avoid_: User-selected upload target, UI-managed backup destination, per-request destination
+
 **Article Cluster**:
 A deduplicated article record that may have been seen from multiple feed subscriptions or sources. Duplicate feed items are merged into one cluster while preserving source appearances as relevance and heat signals. The first version only auto-merges strong matches such as canonical URL, same-source feed GUID, or content hash matches; title-similar or event-similar articles remain separate.
 _Avoid_: Dropped duplicate, repeated article row

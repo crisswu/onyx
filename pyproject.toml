@@ -126,6 +126,7 @@ backend = [
     "opentelemetry-proto>=1.39.0",
     "python3-saml==1.15.0",
     "xmlsec==1.3.17",
+    "oss2>=2.19.1",
 ]
 
 # Dev tools
