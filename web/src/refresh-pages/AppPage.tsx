@@ -149,9 +149,13 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
   // available in server-side components
   const settings = useSettingsContext();
 
-  const appNameRef = useRef<string>("Onyx");
+  const appNameRef = useRef<string>("Eva");
   useEffect(() => {
-    const appName = settings.enterpriseSettings?.application_name || "Onyx";
+    const configuredAppName = settings.enterpriseSettings?.application_name?.trim();
+    const appName =
+      configuredAppName && configuredAppName !== "Onyx"
+        ? configuredAppName
+        : "Eva";
     appNameRef.current = appName;
     document.title = currentChatSession?.name
       ? `${currentChatSession.name} — ${appName}`

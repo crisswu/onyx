@@ -49,6 +49,12 @@ export default function Layout({ children }: LayoutProps) {
             >
               Chat Preferences
             </SidebarTab>
+            <SidebarTab
+              href="/app/settings/feishu"
+              selected={pathname === "/app/settings/feishu"}
+            >
+              Feishu
+            </SidebarTab>
             {showAccountsAccessTab && (
               <SidebarTab
                 href="/app/settings/accounts-access"

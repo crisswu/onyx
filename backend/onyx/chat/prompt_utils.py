@@ -4,7 +4,6 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from onyx.db.eva_config import get_eva_tools_config
 from onyx.db.eva_config import get_eva_tools_config_for_user
 from onyx.db.eva_memory import EvaMemoryDB
 from onyx.db.eva_memory import EvaMemoryItem
@@ -69,23 +68,8 @@ def _read_eva_prompt_file(filename: str, user_key: str | None) -> str:
     return content[:EVA_PROMPT_FILE_CHAR_LIMIT].rstrip() + "\n...（内容已截断）"
 
 
-def _read_eva_persona_file() -> str:
-    data_dir = get_eva_tools_config().data_dir
-    if data_dir is None:
-        return ""
-
-    path = data_dir / "eva.md"
-    if not path.exists() or not path.is_file():
-        return ""
-
-    content = path.read_text(encoding="utf-8").strip()
-    if len(content) <= EVA_PROMPT_FILE_CHAR_LIMIT:
-        return content
-    return content[:EVA_PROMPT_FILE_CHAR_LIMIT].rstrip() + "\n...（内容已截断）"
-
-
 def _build_eva_persona_section(user_key: str | None) -> str:
-    eva_persona = _read_eva_persona_file()
+    eva_persona = _read_eva_prompt_file("eva.md", user_key)
     criss_profile = _read_eva_prompt_file("criss.md", user_key)
     if not eva_persona and not criss_profile:
         return ""
@@ -202,11 +186,13 @@ def build_eva_system_prompt_extension(
 
 def get_default_base_system_prompt(db_session: Session) -> str:
     default_persona = get_default_behavior_persona(db_session)
-    return (
-        default_persona.system_prompt
-        if default_persona and default_persona.system_prompt is not None
-        else DEFAULT_SYSTEM_PROMPT
-    )
+    if (
+        default_persona
+        and default_persona.system_prompt
+        and default_persona.system_prompt.strip()
+    ):
+        return default_persona.system_prompt
+    return DEFAULT_SYSTEM_PROMPT
 
 
 @log_function_time(print_only=True)
@@ -216,6 +202,7 @@ def calculate_reserved_tokens(
     token_counter: Callable[[str], int],
     files: list[FileDescriptor] | None = None,
     user_memory_context: UserMemoryContext | None = None,
+    include_eva_system_prompt: bool = True,
 ) -> int:
     """
     Calculate reserved token count for system prompt and user files.
@@ -230,6 +217,8 @@ def calculate_reserved_tokens(
         token_counter: Function that counts tokens in text
         files: List of file descriptors from the chat message (optional)
         user_memory_context: User memory context (optional)
+        include_eva_system_prompt: Whether to include EVA persona and memory
+            context in the estimated system prompt.
 
     Returns:
         Total reserved token count
@@ -244,6 +233,7 @@ def calculate_reserved_tokens(
         tools=None,
         should_cite_documents=True,
         include_all_guidance=True,
+        include_eva_system_prompt=include_eva_system_prompt,
     )
 
     custom_agent_prompt = persona_system_prompt if persona_system_prompt else ""
@@ -355,6 +345,7 @@ def build_system_prompt(
     tools: Sequence[Tool] | None = None,
     should_cite_documents: bool = False,
     include_all_guidance: bool = False,
+    include_eva_system_prompt: bool = True,
 ) -> str:
     """Should only be called with the default behavior system prompt.
     If the user has replaced the default behavior prompt with their custom agent prompt, do not call this function.
@@ -371,9 +362,10 @@ def build_system_prompt(
     # Replace reminder tag placeholder if present
     system_prompt = replace_reminder_tag(system_prompt)
 
-    system_prompt += build_eva_system_prompt_extension(
-        user_memory_context, eva_recall_query=eva_recall_query
-    )
+    if include_eva_system_prompt:
+        system_prompt += build_eva_system_prompt_extension(
+            user_memory_context, eva_recall_query=eva_recall_query
+        )
 
     company_context = get_company_context()
     user_info_section = _build_user_information_section(

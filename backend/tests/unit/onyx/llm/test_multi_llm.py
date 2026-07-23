@@ -22,6 +22,7 @@ from onyx.llm.models import FunctionCall
 from onyx.llm.models import LanguageModelInput
 from onyx.llm.models import ReasoningEffort
 from onyx.llm.models import ToolCall
+from onyx.llm.models import ToolChoiceOptions
 from onyx.llm.models import UserMessage
 from onyx.llm.multi_llm import LitellmLLM
 from onyx.llm.utils import get_max_input_tokens
@@ -1694,6 +1695,110 @@ def test_no_tool_choice_sent_when_no_tools(default_multi_llm: LitellmLLM) -> Non
         assert "tool_choice" not in kwargs, (
             "tool_choice must not be sent to providers when no tools are provided"
         )
+
+
+def test_dashscope_qwen_required_tool_choice_disables_thinking() -> None:
+    llm = LitellmLLM(
+        api_key="test_key",
+        api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        timeout=30,
+        model_provider=LlmProviderNames.OPENAI_COMPATIBLE,
+        model_name="qwen3.7-plus",
+        max_input_tokens=1_000_000,
+    )
+    messages: LanguageModelInput = [UserMessage(content="Research this")]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "research_agent",
+                "description": "Run research",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"task": {"type": "string"}},
+                    "required": ["task"],
+                },
+            },
+        }
+    ]
+    mock_stream_chunks = [
+        litellm.ModelResponse(
+            id="chatcmpl-123",
+            choices=[
+                litellm.Choices(
+                    delta=_create_delta(role="assistant", content="Done"),
+                    finish_reason="stop",
+                    index=0,
+                )
+            ],
+            model="qwen3.7-plus",
+        ),
+    ]
+
+    with patch("litellm.completion") as mock_completion:
+        mock_completion.return_value = mock_stream_chunks
+
+        llm.invoke(
+            messages,
+            tools=tools,
+            tool_choice=ToolChoiceOptions.REQUIRED,
+        )
+
+        kwargs = mock_completion.call_args.kwargs
+        assert kwargs["tool_choice"] == ToolChoiceOptions.REQUIRED
+        assert kwargs["extra_body"]["enable_thinking"] is False
+
+
+def test_dashscope_qwen_auto_tool_choice_keeps_thinking_default() -> None:
+    llm = LitellmLLM(
+        api_key="test_key",
+        api_base="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        timeout=30,
+        model_provider=LlmProviderNames.OPENAI_COMPATIBLE,
+        model_name="qwen3.7-plus",
+        max_input_tokens=1_000_000,
+    )
+    messages: LanguageModelInput = [UserMessage(content="Chat normally")]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "Look up data",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }
+    ]
+    mock_stream_chunks = [
+        litellm.ModelResponse(
+            id="chatcmpl-123",
+            choices=[
+                litellm.Choices(
+                    delta=_create_delta(role="assistant", content="Done"),
+                    finish_reason="stop",
+                    index=0,
+                )
+            ],
+            model="qwen3.7-plus",
+        ),
+    ]
+
+    with patch("litellm.completion") as mock_completion:
+        mock_completion.return_value = mock_stream_chunks
+
+        llm.invoke(
+            messages,
+            tools=tools,
+            tool_choice=ToolChoiceOptions.AUTO,
+        )
+
+        kwargs = mock_completion.call_args.kwargs
+        assert kwargs["tool_choice"] == ToolChoiceOptions.AUTO
+        assert "extra_body" not in kwargs
 
 
 def test_bifrost_normalizes_api_base_in_model_kwargs() -> None:

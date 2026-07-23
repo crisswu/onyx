@@ -8,10 +8,12 @@ and handles connection initialization, session management, and protocol communic
 from collections.abc import Callable
 from collections.abc import Coroutine
 from enum import Enum
+import time
 from typing import Any
 from typing import Dict
 from typing import TypeVar
 
+import httpx
 from mcp import ClientSession
 from mcp.client.auth import OAuthClientProvider
 from mcp.client.sse import sse_client
@@ -34,6 +36,8 @@ logger = setup_logger()
 T = TypeVar("T", covariant=True)
 
 MCPClientFunction = Callable[[ClientSession], Coroutine[Any, Any, T]]
+MCP_CONNECT_RETRY_ATTEMPTS = 3
+MCP_CONNECT_RETRY_BASE_SECONDS = 1.0
 
 
 class MCPMessageType(str, Enum):
@@ -171,13 +175,13 @@ def _create_mcp_client_function_runner(
 
 
 def log_exception_group(e: ExceptionGroup) -> Exception | None:
-    logger.error(e)
+    logger.error("%r", e)
     saved_e = None
     for err in e.exceptions:
         if isinstance(err, ExceptionGroup):
             saved_e = log_exception_group(err) or saved_e
         else:
-            logger.error(err)
+            logger.error("%r", err)
             saved_e = err
 
     return saved_e
@@ -194,17 +198,38 @@ def _call_mcp_client_function_sync(
     run_client_function = _create_mcp_client_function_runner(
         function, server_url, connection_headers, transport, auth, **kwargs
     )
-    try:
-        return run_async_sync_no_cancel(run_client_function())
-    except Exception as e:
-        logger.error("Failed to call MCP client function: %s", e)
-        if isinstance(e, ExceptionGroup):
-            original_exception = e
-            saved_e = log_exception_group(e)
-            if saved_e:
-                raise saved_e
-            raise original_exception
-        raise e
+    last_error: Exception | None = None
+    for attempt in range(1, MCP_CONNECT_RETRY_ATTEMPTS + 1):
+        try:
+            return run_async_sync_no_cancel(run_client_function())
+        except Exception as e:
+            logger.error("Failed to call MCP client function: %r", e)
+            if isinstance(e, ExceptionGroup):
+                original_exception = e
+                saved_e = log_exception_group(e)
+                if saved_e:
+                    e = saved_e
+                else:
+                    raise original_exception
+
+            last_error = e
+            if not isinstance(e, httpx.TransportError):
+                raise e
+            if attempt == MCP_CONNECT_RETRY_ATTEMPTS:
+                break
+
+            delay = MCP_CONNECT_RETRY_BASE_SECONDS * attempt
+            logger.warning(
+                "MCP client connect failed; retrying attempt %s/%s in %.1fs: %r",
+                attempt + 1,
+                MCP_CONNECT_RETRY_ATTEMPTS,
+                delay,
+                e,
+            )
+            time.sleep(delay)
+
+    assert last_error is not None
+    raise last_error
 
 
 async def _call_mcp_client_function_async(

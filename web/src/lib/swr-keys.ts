@@ -84,6 +84,7 @@ export const SWR_KEYS = {
   recentFiles: "/api/user/files/recent",
   userPats: "/api/user/pats",
   userPatScopes: "/api/user/pats/scopes",
+  evaProfile: "/api/eva/profile",
   notifications: "/api/notifications",
   notificationsSummary: "/api/notifications/summary",
   notificationsPage: (pageNum: number, pageSize: number) => {

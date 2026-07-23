@@ -2,73 +2,31 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import time
-import urllib.error
 import urllib.request
-from datetime import datetime
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.engine.sql_engine import SqlEngine
 from onyx.db.eva_config import get_eva_knowledge_db_path
 from onyx.db.eva_config import get_eva_tools_config
+from onyx.db.eva_personal import eva_reminder_db_paths
+from onyx.db.eva_personal import EvaReminderDB
+from onyx.db.feishu import get_feishu_binding_by_user_id
+from onyx.db.users import get_user_by_email
+from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
-BASE_DB_PATH = get_eva_knowledge_db_path() or Path(
-    os.environ.get("EVA_KNOWLEDGE_DB_PATH", "/app/data/knowledge.db")
-)
 POLL_SECONDS = int(os.environ.get("EVA_REMINDER_POLL_SECONDS", "60"))
-RETRY_LOOKBACK_MINUTES = int(os.environ.get("EVA_REMINDER_RETRY_LOOKBACK_MINUTES", "30"))
+RETRY_LOOKBACK_MINUTES = int(
+    os.environ.get("EVA_REMINDER_RETRY_LOOKBACK_MINUTES", "30")
+)
 LOOKAHEAD_MINUTES = int(os.environ.get("EVA_REMINDER_LOOKAHEAD_MINUTES", "1"))
 EXPIRY_GRACE_MINUTES = int(os.environ.get("EVA_REMINDER_EXPIRY_GRACE_MINUTES", "60"))
-FEISHU_API_BASE = os.environ.get("FEISHU_API_BASE", "https://open.feishu.cn").rstrip("/")
-
-
-def _knowledge_db_paths() -> list[Path]:
-    paths: list[Path] = [BASE_DB_PATH]
-    config = get_eva_tools_config()
-    if config.user_data_root and config.user_data_root.exists():
-        paths.extend(sorted(config.user_data_root.glob("*/knowledge.db")))
-
-    deduped: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        resolved = path.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        deduped.append(path)
-    return deduped
-
-
-def _connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _ensure_schema(db_path: Path) -> None:
-    with _connect(db_path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS reminders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message TEXT NOT NULL,
-                recipient TEXT NOT NULL,
-                send_time DATETIME NOT NULL,
-                status TEXT DEFAULT 'pending',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                sent_at DATETIME
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_reminders_status_time
-            ON reminders(status, send_time)
-            """
-        )
+FEISHU_API_BASE = os.environ.get("FEISHU_API_BASE", "https://open.feishu.cn").rstrip(
+    "/"
+)
 
 
 def _request_json(
@@ -122,19 +80,15 @@ def _get_tenant_access_token() -> str:
     return str(token)
 
 
-def _send_feishu_owner_message(message: str) -> None:
+def _send_feishu_message(open_id: str, message: str) -> None:
     if not _feishu_enabled():
         raise RuntimeError("FEISHU_ENABLED is not true")
-
-    owner_open_id = os.environ.get("FEISHU_OWNER_OPEN_ID", "").strip()
-    if not owner_open_id:
-        raise RuntimeError("missing FEISHU_OWNER_OPEN_ID")
 
     token = _get_tenant_access_token()
     response = _request_json(
         f"{FEISHU_API_BASE}/open-apis/im/v1/messages?receive_id_type=open_id",
         {
-            "receive_id": owner_open_id,
+            "receive_id": open_id,
             "msg_type": "text",
             "content": json.dumps({"text": message}, ensure_ascii=False),
         },
@@ -144,55 +98,43 @@ def _send_feishu_owner_message(message: str) -> None:
         raise RuntimeError(response.get("msg") or str(response))
 
 
-def _pending_reminders(db_path: Path) -> list[dict[str, Any]]:
-    now = datetime.now()
-    time_start = (now - timedelta(minutes=RETRY_LOOKBACK_MINUTES)).isoformat()
-    time_end = (now + timedelta(minutes=LOOKAHEAD_MINUTES)).isoformat()
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM reminders
-            WHERE status = 'pending'
-              AND send_time BETWEEN ? AND ?
-            ORDER BY send_time ASC
-            """,
-            (time_start, time_end),
-        ).fetchall()
-    return [dict(row) for row in rows]
+def _user_email_for_reminder_db_path(db_path: Path) -> str:
+    config = get_eva_tools_config()
+    base_path = (get_eva_knowledge_db_path() or db_path).resolve()
+    if db_path.resolve() == base_path:
+        return config.owner_email
+    return db_path.parent.name.strip().lower()
 
 
-def _mark_sent(db_path: Path, reminder_id: int) -> None:
-    with _connect(db_path) as conn:
-        conn.execute(
-            """
-            UPDATE reminders
-            SET status = 'sent', sent_at = ?
-            WHERE id = ?
-            """,
-            (datetime.now().isoformat(), reminder_id),
-        )
+def _open_id_for_reminder_db_path(db_path: Path) -> str | None:
+    user_email = _user_email_for_reminder_db_path(db_path)
+    with get_session_with_current_tenant() as db_session:
+        user = get_user_by_email(user_email, db_session)
+        if user is not None:
+            binding = get_feishu_binding_by_user_id(db_session, user.id)
+            if binding and binding.open_id:
+                return binding.open_id
+
+    owner_open_id = os.environ.get("FEISHU_OWNER_OPEN_ID", "").strip()
+    if user_email == get_eva_tools_config().owner_email and owner_open_id:
+        return owner_open_id
+    return None
 
 
-def _mark_expired(db_path: Path) -> int:
-    threshold = (datetime.now() - timedelta(minutes=EXPIRY_GRACE_MINUTES)).isoformat()
-    with _connect(db_path) as conn:
-        cursor = conn.execute(
-            """
-            UPDATE reminders
-            SET status = 'expired'
-            WHERE status = 'pending'
-              AND send_time < ?
-            """,
-            (threshold,),
-        )
-        return int(cursor.rowcount)
+def _send_reminder_message(db_path: Path, message: str) -> None:
+    open_id = _open_id_for_reminder_db_path(db_path)
+    if not open_id:
+        raise RuntimeError(f"No Feishu binding found for reminders in {db_path}")
+    _send_feishu_message(open_id, message)
 
 
 def process_once() -> None:
-    for db_path in _knowledge_db_paths():
-        _ensure_schema(db_path)
-        for reminder in _pending_reminders(db_path):
+    for db_path in eva_reminder_db_paths():
+        reminder_db = EvaReminderDB(db_path=db_path)
+        for reminder in reminder_db.list_due_pending(
+            retry_lookback_minutes=RETRY_LOOKBACK_MINUTES,
+            lookahead_minutes=LOOKAHEAD_MINUTES,
+        ):
             reminder_id = int(reminder["id"])
             recipient = str(reminder["recipient"] or "Criss")
             message = str(reminder["message"])
@@ -203,31 +145,36 @@ def process_once() -> None:
                 continue
 
             try:
-                _send_feishu_owner_message(message)
+                _send_reminder_message(db_path, message)
             except Exception as exc:
                 print(f"[WARN] Reminder #{reminder_id} send failed: {exc}")
                 continue
 
-            _mark_sent(db_path, reminder_id)
+            reminder_db.mark_sent(reminder_id)
             print(f"[OK] Reminder #{reminder_id} sent from {db_path}")
 
-        expired = _mark_expired(db_path)
+        expired = reminder_db.mark_expired_reminders(
+            grace_minutes=EXPIRY_GRACE_MINUTES
+        )
         if expired:
             print(f"[INFO] Marked {expired} expired reminders in {db_path}")
 
 
 def main() -> None:
-    for db_path in _knowledge_db_paths():
-        _ensure_schema(db_path)
+    CURRENT_TENANT_ID_CONTEXTVAR.set(POSTGRES_DEFAULT_SCHEMA)
+    SqlEngine.init_engine(pool_size=2, max_overflow=1)
+
+    for db_path in eva_reminder_db_paths():
+        EvaReminderDB(db_path=db_path)
     print("EVA reminder worker started")
     print("DBs:")
-    for db_path in _knowledge_db_paths():
+    for db_path in eva_reminder_db_paths():
         print(f"- {db_path}")
     print(f"Poll seconds: {POLL_SECONDS}")
     while True:
         try:
             process_once()
-        except (urllib.error.URLError, sqlite3.Error, Exception) as exc:
+        except Exception as exc:
             print(f"[ERROR] Reminder processing failed: {exc}")
         time.sleep(POLL_SECONDS)
 

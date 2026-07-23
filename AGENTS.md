@@ -9,6 +9,14 @@ This file provides guidance to AI agents when working with code in this reposito
 - To make tests work, check the `.env` file at the root of the project to find an OpenAI key.
 - If using `playwright` to explore the frontend, you can usually log in with username `a@example.com` and password
   `a`. The app can be accessed at `http://localhost:3000`.
+- The user's active Onyx UI is available at `http://100.65.125.67:3000/`. It is started on boot by
+  `onyx-compose.service`, which runs Docker Compose from `/home/criss/onyx/onyx_data/deployment` with
+  `docker-compose.yml` and `docker-compose.onyx-lite.yml`.
+- Frontend source changes under `web/` do not hot-reload into the active UI because `web_server` runs from a built
+  Docker image. After frontend changes, run `scripts/update_onyx_deployment.sh` from the repo root to rebuild and
+  restart `web_server`. Useful variants: `scripts/update_onyx_deployment.sh --backend` for backend image changes,
+  `scripts/update_onyx_deployment.sh --all` for the full active stack, and
+  `scripts/update_onyx_deployment.sh --restart-only` when only a restart is needed.
 - You should assume that all Onyx services are running. To verify, you can check the `backend/log` directory to
   make sure we see logs coming out from the relevant service.
 - To connect to the Postgres database, use: `docker exec -it onyx-relational_db-1 psql -U postgres -c "<SQL>"`

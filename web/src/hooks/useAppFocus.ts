@@ -12,7 +12,9 @@ import { usePathname, useSearchParams } from "next/navigation";
 export type AppFocusType =
   | { type: "agent" | "project" | "chat"; id: string }
   | "new-session"
+  | "blackboard"
   | "more-agents"
+  | "pi"
   | "user-settings"
   | "shared-chat";
 
@@ -43,6 +45,14 @@ export class AppFocus {
     return this.value === "more-agents";
   }
 
+  isBlackboard(): boolean {
+    return this.value === "blackboard";
+  }
+
+  isPi(): boolean {
+    return this.value === "pi";
+  }
+
   isUserSettings(): boolean {
     return this.value === "user-settings";
   }
@@ -57,7 +67,9 @@ export class AppFocus {
     | "chat"
     | "shared-chat"
     | "new-session"
+    | "blackboard"
     | "more-agents"
+    | "pi"
     | "user-settings" {
     return typeof this.value === "object" ? this.value.type : this.value;
   }
@@ -79,6 +91,12 @@ export default function useAppFocus(): AppFocus {
     }
     if (pathname.startsWith("/app/settings")) {
       return new AppFocus("user-settings");
+    }
+    if (pathname.startsWith("/app/pi")) {
+      return new AppFocus("pi");
+    }
+    if (pathname.startsWith("/app/blackboard")) {
+      return new AppFocus("blackboard");
     }
     if (pathname.startsWith("/app/agents")) {
       return new AppFocus("more-agents");

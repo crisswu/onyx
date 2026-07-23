@@ -11,48 +11,24 @@ import {
   WebVitals,
 } from "@/lib/analytics/shared";
 import Script from "next/script";
-import { DM_Mono, Hanken_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import StatsOverlayLoader from "@/components/dev/StatsOverlayLoader";
-import { cn } from "@opal/utils";
 import AppHealthBanner from "@/sections/AppHealthBanner";
 import LicenseExpiryBanner from "@/sections/LicenseExpiryBanner";
 import ProductGatingWrapper from "@/providers/ProductGatingWrapper";
 import SWRConfigProvider from "@/providers/SWRConfigProvider";
 import ChineseLocalizationProvider from "@/providers/ChineseLocalizationProvider";
 
-const hankenGrotesk = Hanken_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-hanken-grotesk",
-  display: "swap",
-  fallback: [
-    "-apple-system",
-    "BlinkMacSystemFont",
-    "Segoe UI",
-    "Roboto",
-    "sans-serif",
-  ],
-});
-
-const dmMono = DM_Mono({
-  weight: "400",
-  subsets: ["latin"],
-  variable: "--font-dm-mono",
-  display: "swap",
-  fallback: [
-    "SF Mono",
-    "Monaco",
-    "Cascadia Code",
-    "Roboto Mono",
-    "Consolas",
-    "Courier New",
-    "monospace",
-  ],
-});
+const fontVariables = {
+  "--font-hanken-grotesk":
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  "--font-dm-mono":
+    '"SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace',
+} as React.CSSProperties;
 
 export const metadata: Metadata = {
-  title: "Onyx",
+  title: "Eva",
   description: "面向企业文档的智能问答",
 };
 
@@ -68,11 +44,7 @@ interface LayoutProps {
 
 export default function Layout({ children }: LayoutProps) {
   return (
-    <html
-      lang="zh-CN"
-      className={cn(hankenGrotesk.variable, dmMono.variable)}
-      suppressHydrationWarning
-    >
+    <html lang="zh-CN" style={fontVariables} suppressHydrationWarning>
       <head>
         <meta
           name="viewport"

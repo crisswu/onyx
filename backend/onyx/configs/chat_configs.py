@@ -8,10 +8,9 @@ NUM_RETURNED_HITS = 50
 MAX_CHUNKS_FED_TO_CHAT = int(os.environ.get("MAX_CHUNKS_FED_TO_CHAT") or 25)
 
 # Maximum number of LLM cycles (one tool-call round-trip per cycle) before the
-# agent is forced to answer. Default 6 covers the common search → open_url
-# pattern documented at the call site; raise via env when integrating with
-# tool-heavy MCPs that legitimately need more turns.
-MAX_LLM_CYCLES: int = int(os.environ.get("MAX_LLM_CYCLES") or 6)
+# agent is forced to answer. Default 10 gives tool-heavy chats more room while
+# still bounding runaway loops; override via env when needed.
+MAX_LLM_CYCLES: int = int(os.environ.get("MAX_LLM_CYCLES") or 10)
 
 # 1 / (1 + DOC_TIME_DECAY * doc-age-in-years), set to 0 to have no decay
 # Capped in Vespa at 0.5

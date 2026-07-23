@@ -27,6 +27,7 @@ from onyx.chat.prompt_utils import build_system_prompt
 from onyx.chat.prompt_utils import get_default_base_system_prompt
 from onyx.configs.app_configs import INTEGRATION_TESTS_MODE
 from onyx.configs.chat_configs import MAX_LLM_CYCLES
+from onyx.configs.constants import DEFAULT_PERSONA_ID
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import MessageType
 from onyx.context.search.models import SearchDoc
@@ -230,13 +231,14 @@ def _try_fallback_tool_extraction(
     return llm_step_result, True
 
 
-# Default 6 covers the common search → open_url pattern:
+# Default 10 covers longer tool-heavy flows while still bounding runaway loops:
 # Cycle 1: Calls web_search for something
 # Cycle 2: Calls open_url for some results
 # Cycle 3: Calls web_search for some other aspect of the question
 # Cycle 4: Calls open_url for some results
 # Cycle 5: Maybe call open_url for some additional results or because last set failed
-# Cycle 6: No more tools available, forced to answer
+# Cycles 6-9: Additional follow-up tool calls if needed
+# Cycle 10: No more tools available, forced to answer
 # Override via the MAX_LLM_CYCLES env var when running with tool-heavy MCPs
 # that legitimately need more turns. Imported from chat_configs.
 
@@ -827,15 +829,18 @@ def run_llm_loop(
                 ),
                 None,
             )
+            include_eva_system_prompt = (
+                persona is None or persona.id == DEFAULT_PERSONA_ID
+            )
             if persona and persona.replace_base_system_prompt:
                 # Handles the case where user has checked off the "Replace base system prompt" checkbox
                 if persona.system_prompt:
-                    system_prompt_str = (
-                        persona.system_prompt
-                        + build_eva_system_prompt_extension(
-                            user_memory_context, eva_recall_query=eva_recall_query
+                    system_prompt_str = persona.system_prompt
+                    if include_eva_system_prompt:
+                        system_prompt_str += build_eva_system_prompt_extension(
+                            user_memory_context,
+                            eva_recall_query=eva_recall_query,
                         )
-                    )
                     system_prompt = ChatMessageSimple(
                         message=system_prompt_str,
                         token_count=token_counter(system_prompt_str),
@@ -864,6 +869,7 @@ def run_llm_loop(
                         tools=tools,
                         should_cite_documents=should_cite_documents
                         or always_cite_documents,
+                        include_eva_system_prompt=include_eva_system_prompt,
                     )
                     system_prompt = ChatMessageSimple(
                         message=system_prompt_str,

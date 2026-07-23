@@ -78,12 +78,14 @@ from onyx.server.documents.document import router as document_router
 from onyx.server.documents.standard_oauth import router as standard_oauth_router
 from onyx.server.documents.targeted_reindex import router as targeted_reindex_router
 from onyx.server.eva_feishu.api import router as eva_feishu_router
+from onyx.server.features.blackboard.api import router as blackboard_router
 from onyx.server.features.build.api import router as build_router
 from onyx.server.features.build.webapp_proxy import public_build_router
 from onyx.server.features.default_assistant.api import (
     router as default_assistant_router,
 )
 from onyx.server.features.document_set.api import router as document_set_router
+from onyx.server.features.eva_profile.api import router as eva_profile_router
 from onyx.server.features.hierarchy.api import router as hierarchy_router
 from onyx.server.features.input_prompt.api import (
     admin_router as admin_input_prompt_router,
@@ -97,6 +99,7 @@ from onyx.server.features.oauth_config.api import (
 )
 from onyx.server.features.oauth_config.api import router as oauth_config_router
 from onyx.server.features.password.api import router as password_router
+from onyx.server.features.pi.api import router as pi_router
 from onyx.server.features.persona.api import admin_agents_router
 from onyx.server.features.persona.api import admin_router as admin_persona_router
 from onyx.server.features.persona.api import agents_router
@@ -493,6 +496,8 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     register_onyx_exception_handlers(application)
 
     include_router_with_global_prefix_prepended(application, password_router)
+    include_router_with_global_prefix_prepended(application, pi_router)
+    include_router_with_global_prefix_prepended(application, blackboard_router)
     include_router_with_global_prefix_prepended(application, chat_router)
     include_router_with_global_prefix_prepended(application, query_router)
     include_router_with_global_prefix_prepended(application, document_router)
@@ -543,6 +548,7 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     )
     include_router_with_global_prefix_prepended(application, embedding_admin_router)
     include_router_with_global_prefix_prepended(application, embedding_router)
+    include_router_with_global_prefix_prepended(application, eva_profile_router)
     include_router_with_global_prefix_prepended(application, web_search_router)
     include_router_with_global_prefix_prepended(application, web_search_admin_router)
     include_router_with_global_prefix_prepended(application, voice_admin_router)

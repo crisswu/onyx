@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -12,14 +13,30 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Request
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from onyx.auth.permissions import require_permission
 from onyx.auth.users import get_anonymous_user
 from onyx.chat.chat_state import ChatStateContainer
 from onyx.chat.process_message import gather_stream_full
 from onyx.chat.process_message import handle_stream_message_objects
+from onyx.db.engine.sql_engine import get_session
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.enums import Permission
+from onyx.db.feishu import bind_feishu_open_id_with_code
+from onyx.db.feishu import create_or_refresh_feishu_bind_code
+from onyx.db.feishu import delete_feishu_binding_for_user
+from onyx.db.feishu import FEISHU_BIND_CODE_TTL_MINUTES
+from onyx.db.feishu import get_feishu_binding_by_user_id
+from onyx.db.feishu import get_feishu_user_by_open_id
+from onyx.db.models import User
+from onyx.db.users import fetch_user_by_id
 from onyx.db.users import get_user_by_email
+from onyx.error_handling.error_codes import OnyxErrorCode
+from onyx.error_handling.exceptions import OnyxError
 from onyx.server.query_and_chat.models import ChatSessionCreationRequest
 from onyx.server.query_and_chat.models import MessageOrigin
 from onyx.server.query_and_chat.models import SendMessageRequest
@@ -44,6 +61,21 @@ FEISHU_CARD_TABLE_SEPARATOR_RE = re.compile(
     r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$"
 )
 FEISHU_CARD_IMAGE_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
+FEISHU_BIND_COMMAND_RE = re.compile(r"^\s*/bind\s+(?P<code>\d{6})\s*$", re.I)
+
+
+class FeishuBindingStatus(BaseModel):
+    is_bound: bool
+    open_id: str | None
+    bind_code: str | None
+    bind_code_expires_at: str | None
+    bind_code_ttl_minutes: int
+
+
+class FeishuBindingCodeResponse(BaseModel):
+    bind_code: str
+    bind_code_expires_at: str
+    bind_code_ttl_minutes: int
 
 
 def _feishu_enabled() -> bool:
@@ -154,6 +186,10 @@ def _set_message_status(
             """,
             (message_id, event_id, sender_open_id, status),
         )
+
+
+def _feishu_session_key(user_id: UUID, open_id: str) -> str:
+    return f"{user_id}:{open_id}"
 
 
 def _request_json(
@@ -766,14 +802,70 @@ def _extract_text_content(raw_content: Any) -> str:
     return str(parsed.get("text", "")).strip()
 
 
-def _run_onyx_chat(sender_open_id: str, text: str) -> str:
+def _binding_status_for_user(db_session: Session, user: User) -> FeishuBindingStatus:
+    binding = get_feishu_binding_by_user_id(db_session, user.id)
+    bind_code = binding.bind_code if binding else None
+    bind_code_expires_at = binding.bind_code_expires_at if binding else None
+    if bind_code_expires_at is not None:
+        now = (
+            datetime.datetime.now()
+            if bind_code_expires_at.tzinfo is None
+            else datetime.datetime.now(bind_code_expires_at.tzinfo)
+        )
+        if bind_code_expires_at <= now:
+            bind_code = None
+            bind_code_expires_at = None
+    return FeishuBindingStatus(
+        is_bound=bool(binding and binding.open_id),
+        open_id=binding.open_id if binding else None,
+        bind_code=bind_code,
+        bind_code_expires_at=(
+            bind_code_expires_at.isoformat() if bind_code_expires_at else None
+        ),
+        bind_code_ttl_minutes=FEISHU_BIND_CODE_TTL_MINUTES,
+    )
+
+
+@router.get("/binding")
+def get_feishu_binding_status(
+    db_session: Session = Depends(get_session),
+    user: User = Depends(require_permission(Permission.BASIC_ACCESS)),
+) -> FeishuBindingStatus:
+    return _binding_status_for_user(db_session, user)
+
+
+@router.post("/binding/code")
+def create_feishu_binding_code(
+    db_session: Session = Depends(get_session),
+    user: User = Depends(require_permission(Permission.BASIC_ACCESS)),
+) -> FeishuBindingCodeResponse:
+    binding = create_or_refresh_feishu_bind_code(db_session, user.id)
+    if binding.bind_code is None or binding.bind_code_expires_at is None:
+        raise OnyxError(
+            OnyxErrorCode.INTERNAL_ERROR,
+            "Failed to create Feishu binding code",
+        )
+    return FeishuBindingCodeResponse(
+        bind_code=binding.bind_code,
+        bind_code_expires_at=binding.bind_code_expires_at.isoformat(),
+        bind_code_ttl_minutes=FEISHU_BIND_CODE_TTL_MINUTES,
+    )
+
+
+@router.delete("/binding")
+def delete_feishu_binding(
+    db_session: Session = Depends(get_session),
+    user: User = Depends(require_permission(Permission.BASIC_ACCESS)),
+) -> FeishuBindingStatus:
+    delete_feishu_binding_for_user(db_session, user.id)
+    return _binding_status_for_user(db_session, user)
+
+
+def _run_onyx_chat(user: User, sender_open_id: str, text: str) -> str:
     CURRENT_TENANT_ID_CONTEXTVAR.set(POSTGRES_DEFAULT_SCHEMA)
 
-    user_email = _get_env("FEISHU_ONYX_USER_EMAIL") or "a@example.com"
-    with get_session_with_current_tenant() as db_session:
-        user = get_user_by_email(user_email, db_session) or get_anonymous_user()
-
-    chat_session_id = _get_chat_session_id(sender_open_id)
+    session_key = _feishu_session_key(user.id, sender_open_id)
+    chat_session_id = _get_chat_session_id(session_key)
     if chat_session_id is None:
         chat_session_info = ChatSessionCreationRequest(
             persona_id=int(_get_env("FEISHU_PERSONA_ID") or "0"),
@@ -803,7 +895,7 @@ def _run_onyx_chat(sender_open_id: str, text: str) -> str:
     )
     result = gather_stream_full(packets, state_container)
     if result.chat_session_id is not None:
-        _set_chat_session_id(sender_open_id, result.chat_session_id)
+        _set_chat_session_id(session_key, result.chat_session_id)
     if result.error_msg:
         raise RuntimeError(result.error_msg)
     return result.answer_citationless or result.answer
@@ -814,6 +906,7 @@ def _process_message(
     message_id: str,
     event_id: str,
     sender_open_id: str,
+    user_id: UUID,
     text: str,
 ) -> None:
     typing_reaction_id: str | None = None
@@ -827,7 +920,9 @@ def _process_message(
         )
         status_message_id = _reply_processing_status(message_id)
         typing_reaction_id = _add_typing_reaction(message_id)
-        answer = _run_onyx_chat(sender_open_id, text)
+        with get_session_with_current_tenant() as db_session:
+            user = fetch_user_by_id(db_session, user_id) or get_anonymous_user()
+        answer = _run_onyx_chat(user, sender_open_id, text)
         _delete_typing_reaction(message_id, typing_reaction_id)
         typing_reaction_id = None
         if status_message_id:
@@ -886,6 +981,8 @@ async def handle_feishu_event(request: Request) -> dict[str, Any]:
 
 def enqueue_feishu_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
+    CURRENT_TENANT_ID_CONTEXTVAR.set(POSTGRES_DEFAULT_SCHEMA)
+
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge", "")}
 
@@ -905,6 +1002,8 @@ def enqueue_feishu_payload(payload: dict[str, Any]) -> dict[str, Any]:
     message_id = str(message.get("message_id", "")).strip()
     event_id = str(header.get("event_id", "")).strip()
     sender_open_id = str(sender_id.get("open_id", "")).strip()
+    sender_union_id = str(sender_id.get("union_id", "")).strip() or None
+    tenant_key = str(header.get("tenant_key") or event.get("tenant_key") or "").strip()
     chat_type = str(message.get("chat_type", "")).strip().lower()
     message_type = str(message.get("message_type", "")).strip().lower()
     text = _extract_text_content(message.get("content"))
@@ -912,17 +1011,44 @@ def enqueue_feishu_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not message_id or not sender_open_id:
         return {"status": "ignored", "reason": "missing_message_or_sender"}
 
-    owner_open_id = _get_env("FEISHU_OWNER_OPEN_ID")
-    if owner_open_id and sender_open_id != owner_open_id:
-        logger.info("Ignoring Feishu message from non-owner sender.")
-        return {"status": "ignored", "reason": "owner_mismatch"}
-
     if chat_type != "p2p":
         return {"status": "ignored", "reason": "non_p2p"}
 
     if message_type != "text" or not text:
         _reply_to_message(message_id, "当前只支持文本单聊消息。")
         return {"status": "ignored", "reason": "unsupported_message_type"}
+
+    bind_match = FEISHU_BIND_COMMAND_RE.match(text)
+    if bind_match:
+        with get_session_with_current_tenant() as db_session:
+            binding = bind_feishu_open_id_with_code(
+                db_session,
+                bind_code=bind_match.group("code"),
+                open_id=sender_open_id,
+                union_id=sender_union_id,
+                tenant_key=tenant_key or None,
+            )
+        if binding is None:
+            _reply_to_message(message_id, "绑定码无效或已过期，请在 Onyx 设置页重新生成。")
+            return {"status": "bind_failed"}
+        _reply_to_message(message_id, "绑定成功。现在可以直接给我发消息。")
+        return {"status": "bound"}
+
+    user: User | None = None
+    with get_session_with_current_tenant() as db_session:
+        user = get_feishu_user_by_open_id(db_session, sender_open_id)
+        if user is None:
+            owner_open_id = _get_env("FEISHU_OWNER_OPEN_ID")
+            owner_email = _get_env("FEISHU_ONYX_USER_EMAIL")
+            if owner_open_id and sender_open_id == owner_open_id and owner_email:
+                user = get_user_by_email(owner_email, db_session) or get_anonymous_user()
+
+    if user is None:
+        _reply_to_message(
+            message_id,
+            "还没有绑定 Onyx 账号。请先登录 Onyx，在设置页生成飞书绑定码，然后发送 /bind 绑定码。",
+        )
+        return {"status": "ignored", "reason": "unbound_sender"}
 
     existing_status = _get_message_status(message_id)
     if existing_status in {"queued", "processing", "done"}:
@@ -940,6 +1066,7 @@ def enqueue_feishu_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "message_id": message_id,
             "event_id": event_id,
             "sender_open_id": sender_open_id,
+            "user_id": user.id,
             "text": text,
         },
         name=f"feishu-message-{message_id[:8]}",

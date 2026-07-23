@@ -15,6 +15,7 @@ from onyx.db.eva_config import get_eva_conversation_db_path
 from onyx.db.eva_config import get_eva_conversation_db_path_for_user
 from onyx.db.eva_config import get_eva_knowledge_db_path
 from onyx.db.eva_config import get_eva_knowledge_db_path_for_user
+from onyx.db.eva_config import get_eva_tools_config
 from onyx.db.eva_knowledge import _generate_embedding_blob
 from onyx.db.eva_knowledge import _try_load_sqlite_vec
 
@@ -335,6 +336,39 @@ class EvaReminderDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_due_pending(
+        self,
+        *,
+        retry_lookback_minutes: int = 30,
+        lookahead_minutes: int = 1,
+    ) -> list[dict[str, Any]]:
+        now = datetime.now()
+        time_start = (now - timedelta(minutes=retry_lookback_minutes)).isoformat()
+        time_end = (now + timedelta(minutes=lookahead_minutes)).isoformat()
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM reminders
+                WHERE status = 'pending'
+                  AND send_time BETWEEN ? AND ?
+                ORDER BY send_time ASC
+                """,
+                (time_start, time_end),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_sent(self, reminder_id: int) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE reminders
+                SET status = 'sent', sent_at = ?
+                WHERE id = ?
+                """,
+                (datetime.now().isoformat(), reminder_id),
+            )
+
     def mark_expired_reminders(self, grace_minutes: int = 60) -> int:
         threshold = (datetime.now() - timedelta(minutes=grace_minutes)).isoformat()
         with _connect(self.db_path) as conn:
@@ -348,6 +382,124 @@ class EvaReminderDB:
                 (threshold,),
             )
             return int(cursor.rowcount)
+
+
+class EvaBlackboardDB:
+    BOARD_COUNT = 10
+
+    def __init__(self, db_path: Path | None = None) -> None:
+        self.db_path = db_path or eva_knowledge_db_path()
+        self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS blackboards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    board_number INTEGER NOT NULL UNIQUE,
+                    content TEXT DEFAULT '',
+                    settings TEXT DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO blackboards (board_number)
+                VALUES (?)
+                """,
+                [(board_number,) for board_number in range(1, self.BOARD_COUNT + 1)],
+            )
+
+    def get_blackboard(self, board_number: int) -> dict[str, Any] | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM blackboards
+                WHERE board_number = ?
+                """,
+                (board_number,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        data = dict(row)
+        settings = data.get("settings")
+        if isinstance(settings, str):
+            try:
+                parsed_settings = json.loads(settings)
+                data["settings"] = (
+                    parsed_settings if isinstance(parsed_settings, Mapping) else {}
+                )
+            except json.JSONDecodeError:
+                data["settings"] = {}
+        else:
+            data["settings"] = {}
+        return data
+
+    def save_blackboard(
+        self,
+        board_number: int,
+        content: str,
+        settings: Mapping[str, Any] | None = None,
+    ) -> bool:
+        settings_json = json.dumps(dict(settings or {}), ensure_ascii=False)
+        with _connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE blackboards
+                SET content = ?, settings = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE board_number = ?
+                """,
+                (content, settings_json, board_number),
+            )
+            return int(cursor.rowcount) > 0
+
+    def list_blackboards_summary(self) -> list[dict[str, Any]]:
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT board_number, content, updated_at
+                FROM blackboards
+                ORDER BY board_number
+                """
+            ).fetchall()
+
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            content = str(row["content"] or "")
+            result.append(
+                {
+                    "board_number": int(row["board_number"]),
+                    "has_content": bool(content),
+                    "preview": content[:100],
+                    "updated_at": str(row["updated_at"]),
+                }
+            )
+        return result
+
+
+def eva_reminder_db_paths() -> list[Path]:
+    base_path = get_eva_knowledge_db_path() or eva_knowledge_db_path()
+    paths: list[Path] = [base_path]
+
+    config = get_eva_tools_config()
+    if config.user_data_root and config.user_data_root.exists():
+        paths.extend(sorted(config.user_data_root.glob("*/knowledge.db")))
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(path)
+    return deduped
 
 
 def coerce_email_metadata(value: Any) -> dict[str, Any]:

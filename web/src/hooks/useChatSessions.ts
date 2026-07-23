@@ -16,7 +16,7 @@ import useAppFocus from "./useAppFocus";
 import { useAgents } from "@/lib/agents/hooks";
 import { DEFAULT_AGENT_ID } from "@/lib/constants";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 const MIN_LOADING_DURATION_MS = 500;
 
 interface ChatSessionsResponse {

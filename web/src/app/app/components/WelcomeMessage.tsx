@@ -1,11 +1,11 @@
 "use client";
 
-import Logo from "@/refresh-components/Logo";
 import {
   getRandomGreeting,
   GREETING_MESSAGES,
 } from "@/lib/chat/greetingMessages";
 import AgentAvatar from "@/refresh-components/avatars/AgentAvatar";
+import EvaAvatar from "@/refresh-components/avatars/EvaAvatar";
 import Text from "@/refresh-components/texts/Text";
 import { MinimalAgent } from "@/lib/agents/types";
 import { useState, useEffect } from "react";
@@ -47,7 +47,7 @@ export default function WelcomeMessage({
         gap={0.5}
         width="fit"
       >
-        <Logo folded size={32} />
+        <EvaAvatar size={32} />
         <Text as="p" headingH2>
           {greeting}
         </Text>

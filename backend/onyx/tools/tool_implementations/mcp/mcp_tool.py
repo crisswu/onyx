@@ -282,8 +282,9 @@ class MCPTool(Tool[None]):
             )
 
         except Exception as e:
-            error_str = str(e).lower()
-            logger.error("Failed to execute MCP tool '%s': %s", self._name, e)
+            original_error = str(e) or type(e).__name__
+            error_str = original_error.lower()
+            logger.error("Failed to execute MCP tool '%s': %r", self._name, e)
 
             # Check for authentication-related errors
             auth_error_indicators = [
@@ -307,11 +308,11 @@ class MCPTool(Tool[None]):
                 auth_error_msg = (
                     f"Authentication failed for the {self._name} tool from {self.mcp_server.name}. "
                     f"Please use the MCP dropdown in the chat bar to update your credentials "
-                    f"for the {self.mcp_server.name} server. Original error: {str(e)}"
+                    f"for the {self.mcp_server.name} server. Original error: {original_error}"
                 )
                 error_result = {"error": auth_error_msg}
             else:
-                error_result = {"error": f"Tool execution failed: {str(e)}"}
+                error_result = {"error": f"Tool execution failed: {original_error}"}
 
             llm_facing_response = json.dumps(error_result)
 

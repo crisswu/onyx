@@ -28,7 +28,7 @@ class DefaultAssistantUpdateRequest(BaseModel):
     )
     system_prompt: str | None = Field(
         default=None,
-        description="New system prompt (instructions). None resets to default, empty string is allowed.",
+        description="New system prompt (instructions). None or blank resets to default.",
     )
 
 

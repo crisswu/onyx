@@ -98,6 +98,11 @@ interface CreatedTokenState {
   name: string;
 }
 
+interface EvaProfile {
+  criss_md: string;
+  eva_md: string;
+}
+
 interface ScopeGroup {
   label: string;
   rows: PatScopeOption[];
@@ -359,6 +364,122 @@ function PATModal({
   );
 }
 
+function EvaProfileSettings() {
+  const {
+    data: evaProfile,
+    mutate,
+    error,
+    isLoading,
+  } = useSWR<EvaProfile>(SWR_KEYS.evaProfile, errorHandlingFetcher, {
+    revalidateOnFocus: false,
+  });
+  const [crissMd, setCrissMd] = useState("");
+  const [evaMd, setEvaMd] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!evaProfile) return;
+    setCrissMd(evaProfile.criss_md);
+    setEvaMd(evaProfile.eva_md);
+  }, [evaProfile]);
+
+  useEffect(() => {
+    if (error) {
+      toast.error("Failed to load Eva profile");
+    }
+  }, [error]);
+
+  const isDirty =
+    evaProfile !== undefined &&
+    (crissMd !== evaProfile.criss_md || evaMd !== evaProfile.eva_md);
+
+  const saveEvaProfile = useCallback(async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch(SWR_KEYS.evaProfile, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          criss_md: crissMd,
+          eva_md: evaMd,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.detail || "Failed to save Eva profile");
+      }
+
+      const savedProfile = (await response.json()) as EvaProfile;
+      await mutate(savedProfile, { revalidate: false });
+      toast.success("Eva profile saved");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save Eva profile");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [crissMd, evaMd, mutate]);
+
+  return (
+    <Section gap={0.75}>
+      <Content
+        title="Eva Profile"
+        sizePreset="main-content"
+        variant="section"
+        width="full"
+      />
+      <Card>
+        <InputVertical
+          title="Criss Profile"
+          description="Current account profile loaded into Eva context."
+          withLabel
+        >
+          <InputTextArea
+            placeholder="Describe Criss, preferences, background, and long-term context."
+            value={crissMd}
+            onChange={(e) => setCrissMd(e.target.value)}
+            rows={8}
+            maxRows={20}
+            autoResize
+            maxLength={12000}
+            variant={isLoading || isSaving ? "disabled" : undefined}
+          />
+          <CharacterCount value={crissMd} limit={12000} />
+        </InputVertical>
+        <InputVertical
+          title="Eva Persona"
+          description="Persona and behavior instructions loaded into Eva context."
+          withLabel
+        >
+          <InputTextArea
+            placeholder="Describe Eva's identity, tone, behavior, and response style."
+            value={evaMd}
+            onChange={(e) => setEvaMd(e.target.value)}
+            rows={8}
+            maxRows={20}
+            autoResize
+            maxLength={12000}
+            variant={isLoading || isSaving ? "disabled" : undefined}
+          />
+          <CharacterCount value={evaMd} limit={12000} />
+        </InputVertical>
+        <ContentAction
+          title="Save Eva Profile"
+          description="Changes apply to new chat turns after saving."
+          rightChildren={
+            <Button
+              onClick={() => void saveEvaProfile()}
+              disabled={!isDirty || isSaving || isLoading}
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
+          }
+        />
+      </Card>
+    </Section>
+  );
+}
+
 function GeneralSettings() {
   const {
     user,
@@ -522,6 +643,8 @@ function GeneralSettings() {
             </InputHorizontal>
           </Card>
         </Section>
+
+        <EvaProfileSettings />
 
         <Section gap={0.75}>
           <Content

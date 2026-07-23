@@ -3622,6 +3622,33 @@ class OAuthUserToken(Base):
     )
 
 
+class FeishuUserBinding(Base):
+    __tablename__ = "feishu_user_binding"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    open_id: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    union_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tenant_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bind_code: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+    bind_code_expires_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped["User"] = relationship("User")
+
+
 class StarterMessage(BaseModel):
     """Starter message for a persona."""
 

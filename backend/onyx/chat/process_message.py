@@ -830,6 +830,7 @@ def build_chat_turn(
         token_counter=token_counter,
         files=new_msg_req.file_descriptors,
         user_memory_context=prompt_memory_context,
+        include_eva_system_prompt=persona.id == DEFAULT_PERSONA_ID,
     )
 
     # Determine which user files to use. A custom persona fully supersedes the project —

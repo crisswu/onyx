@@ -56,7 +56,7 @@ def mcp_ssrf_httpx_client_factory(
     in an SSRF-guarded transport. Signature matches ``McpHttpClientFactory``."""
     kwargs: dict[str, Any] = {
         "follow_redirects": True,
-        "transport": _SSRFGuardAsyncTransport(),
+        "transport": _SSRFGuardAsyncTransport(http2=True),
         "timeout": timeout
         or httpx.Timeout(_MCP_DEFAULT_TIMEOUT, read=_MCP_DEFAULT_SSE_READ_TIMEOUT),
     }

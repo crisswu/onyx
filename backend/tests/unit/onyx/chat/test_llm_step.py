@@ -980,3 +980,359 @@ class TestEmptyAnswerRecovery:
             p.obj.content for p in packets if isinstance(p.obj, AgentResponseDelta)
         )
         assert emitted == ""
+
+
+class TestPreToolContentBuffering:
+    @staticmethod
+    def _make_llm() -> Any:
+        from unittest.mock import MagicMock
+
+        llm = MagicMock()
+        llm.config = LLMConfig(
+            model_provider="litellm_proxy",
+            model_name="qwen",
+            temperature=0.0,
+            max_input_tokens=100_000,
+        )
+        return llm
+
+    @staticmethod
+    def _tool_definitions() -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "ScheduleReminder",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string"},
+                            "delay_minutes": {"type": "integer"},
+                        },
+                        "required": ["message", "delay_minutes"],
+                    },
+                },
+            }
+        ]
+
+    @staticmethod
+    def _run_stream(stream: Any) -> tuple[Any, list[Any]]:
+        from onyx.chat.llm_step import run_llm_step_pkt_generator
+
+        llm = TestPreToolContentBuffering._make_llm()
+        llm.stream = stream
+        gen = run_llm_step_pkt_generator(
+            history=[],
+            tool_definitions=TestPreToolContentBuffering._tool_definitions(),
+            tool_choice=ToolChoiceOptions.AUTO,
+            llm=llm,
+            placement=Placement(turn_index=0),
+            state_container=None,
+            citation_processor=None,
+        )
+
+        packets: list[Any] = []
+        result: Any = None
+        while True:
+            try:
+                packets.append(next(gen))
+            except StopIteration as stop:
+                result = stop.value
+                break
+
+        llm_step_result, _ = result
+        return llm_step_result, packets
+
+    def test_pre_tool_text_streams_as_reasoning_when_tool_call_follows(self) -> None:
+        from onyx.llm.model_response import ChatCompletionDeltaToolCall
+        from onyx.llm.model_response import Delta
+        from onyx.llm.model_response import FunctionCall
+        from onyx.llm.model_response import ModelResponseStream
+        from onyx.llm.model_response import StreamingChoice
+        from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
+        from onyx.server.query_and_chat.streaming_models import ReasoningDelta
+
+        def _stream(*_args: Any, **_kwargs: Any) -> Any:
+            yield ModelResponseStream(
+                id="chunk-1",
+                created="0",
+                choice=StreamingChoice(
+                    delta=Delta(content="我先创建这个提醒。\n")
+                ),
+            )
+            yield ModelResponseStream(
+                id="chunk-2",
+                created="0",
+                choice=StreamingChoice(
+                    finish_reason="tool_calls",
+                    delta=Delta(
+                        tool_calls=[
+                            ChatCompletionDeltaToolCall(
+                                id="call_1",
+                                index=0,
+                                function=FunctionCall(
+                                    name="ScheduleReminder",
+                                    arguments=(
+                                        '{"message":"改bug","delay_minutes":2}'
+                                    ),
+                                ),
+                            )
+                        ]
+                    ),
+                ),
+            )
+
+        llm_step_result, packets = self._run_stream(_stream)
+
+        emitted = "".join(
+            p.obj.content for p in packets if isinstance(p.obj, AgentResponseDelta)
+        )
+        assert emitted == ""
+        assert llm_step_result.answer is None
+        assert llm_step_result.reasoning == "我先创建这个提醒。"
+        assert llm_step_result.tool_calls is not None
+        assert llm_step_result.tool_calls[0].tool_name == "ScheduleReminder"
+        assert llm_step_result.tool_calls[0].placement.turn_index == 1
+
+        reasoning = "".join(
+            p.obj.reasoning for p in packets if isinstance(p.obj, ReasoningDelta)
+        )
+        assert reasoning == "我先创建这个提醒。"
+
+    def test_buffered_text_streams_when_no_tool_call_follows(self) -> None:
+        from onyx.llm.model_response import Delta
+        from onyx.llm.model_response import ModelResponseStream
+        from onyx.llm.model_response import StreamingChoice
+        from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
+
+        def _stream(*_args: Any, **_kwargs: Any) -> Any:
+            yield ModelResponseStream(
+                id="chunk-1",
+                created="0",
+                choice=StreamingChoice(delta=Delta(content="普通回答")),
+            )
+            yield ModelResponseStream(
+                id="chunk-2",
+                created="0",
+                choice=StreamingChoice(
+                    finish_reason="stop",
+                    delta=Delta(content="继续"),
+                ),
+            )
+
+        llm_step_result, packets = self._run_stream(_stream)
+
+        emitted = "".join(
+            p.obj.content for p in packets if isinstance(p.obj, AgentResponseDelta)
+        )
+        assert emitted == "普通回答继续"
+        assert llm_step_result.answer == "普通回答继续"
+        assert llm_step_result.tool_calls is None
+
+    def test_long_answer_streams_before_stream_end_when_no_tool_call_follows(
+        self,
+    ) -> None:
+        from onyx.chat.llm_step import run_llm_step_pkt_generator
+        from onyx.llm.model_response import Delta
+        from onyx.llm.model_response import ModelResponseStream
+        from onyx.llm.model_response import StreamingChoice
+        from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
+        from onyx.server.query_and_chat.streaming_models import AgentResponseStart
+
+        first_chunk = "这是一段普通流式回答。" * 35
+        second_chunk = "结束。"
+        stream_events: list[str] = []
+
+        def _stream(*_args: Any, **_kwargs: Any) -> Any:
+            stream_events.append("first")
+            yield ModelResponseStream(
+                id="chunk-1",
+                created="0",
+                choice=StreamingChoice(delta=Delta(content=first_chunk)),
+            )
+            stream_events.append("second")
+            yield ModelResponseStream(
+                id="chunk-2",
+                created="0",
+                choice=StreamingChoice(
+                    finish_reason="stop",
+                    delta=Delta(content=second_chunk),
+                ),
+            )
+
+        llm = self._make_llm()
+        llm.stream = _stream
+        gen = run_llm_step_pkt_generator(
+            history=[],
+            tool_definitions=self._tool_definitions(),
+            tool_choice=ToolChoiceOptions.AUTO,
+            llm=llm,
+            placement=Placement(turn_index=0),
+            state_container=None,
+            citation_processor=None,
+        )
+
+        first_packet = next(gen)
+        assert isinstance(first_packet.obj, AgentResponseStart)
+        assert stream_events == ["first"]
+
+        second_packet = next(gen)
+        assert isinstance(second_packet.obj, AgentResponseDelta)
+        assert second_packet.obj.content == first_chunk
+        assert stream_events == ["first"]
+
+        packets = [first_packet, second_packet]
+        result: Any = None
+        while True:
+            try:
+                packets.append(next(gen))
+            except StopIteration as stop:
+                result = stop.value
+                break
+
+        assert stream_events == ["first", "second"]
+        llm_step_result, _ = result
+        emitted = "".join(
+            p.obj.content for p in packets if isinstance(p.obj, AgentResponseDelta)
+        )
+        assert emitted == first_chunk + second_chunk
+        assert llm_step_result.answer == first_chunk + second_chunk
+        assert llm_step_result.tool_calls is None
+
+
+class TestEmptyStreamNonStreamFallback:
+    class _FallbackLLM:
+        def __init__(self, fallback_response: Any) -> None:
+            self.config = LLMConfig(
+                model_provider="openai_compatible",
+                model_name="qwen3.7-plus",
+                temperature=0.0,
+                max_input_tokens=100_000,
+            )
+            self.fallback_response = fallback_response
+            self.invoke_non_stream_calls = 0
+
+        def stream(self, *_args: Any, **_kwargs: Any) -> Any:
+            from onyx.llm.model_response import Delta
+            from onyx.llm.model_response import ModelResponseStream
+            from onyx.llm.model_response import StreamingChoice
+
+            yield ModelResponseStream(
+                id="chunk-1",
+                created="0",
+                choice=StreamingChoice(
+                    finish_reason="tool_calls",
+                    delta=Delta(),
+                ),
+            )
+
+        def invoke_non_stream(self, *_args: Any, **_kwargs: Any) -> Any:
+            self.invoke_non_stream_calls += 1
+            return self.fallback_response
+
+    @staticmethod
+    def _tool_definitions() -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "agent_reach",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                    },
+                },
+            }
+        ]
+
+    @staticmethod
+    def _run(llm: Any) -> tuple[Any, list[Any]]:
+        from onyx.chat.llm_step import run_llm_step_pkt_generator
+
+        gen = run_llm_step_pkt_generator(
+            history=[],
+            tool_definitions=TestEmptyStreamNonStreamFallback._tool_definitions(),
+            tool_choice=ToolChoiceOptions.AUTO,
+            llm=llm,
+            placement=Placement(turn_index=0),
+            state_container=None,
+            citation_processor=None,
+        )
+
+        packets: list[Any] = []
+        result: Any = None
+        while True:
+            try:
+                packets.append(next(gen))
+            except StopIteration as stop:
+                result = stop.value
+                break
+
+        llm_step_result, _ = result
+        return llm_step_result, packets
+
+    def test_recovers_tool_call_from_non_stream_fallback(self) -> None:
+        from onyx.llm.model_response import ChatCompletionMessageToolCall
+        from onyx.llm.model_response import Choice
+        from onyx.llm.model_response import FunctionCall
+        from onyx.llm.model_response import Message
+        from onyx.llm.model_response import ModelResponse
+        from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
+
+        fallback_response = ModelResponse(
+            id="fallback-1",
+            created="0",
+            choice=Choice(
+                finish_reason="tool_calls",
+                message=Message(
+                    tool_calls=[
+                        ChatCompletionMessageToolCall(
+                            id="call-1",
+                            function=FunctionCall(
+                                name="agent_reach",
+                                arguments='{"message":"搜一个B站消息"}',
+                            ),
+                        )
+                    ]
+                ),
+            ),
+        )
+        llm = self._FallbackLLM(fallback_response)
+        llm_step_result, packets = self._run(llm)
+
+        assert llm.invoke_non_stream_calls == 1
+        assert llm_step_result.answer is None
+        assert llm_step_result.tool_calls is not None
+        assert llm_step_result.tool_calls[0].tool_name == "agent_reach"
+        assert llm_step_result.tool_calls[0].tool_args == {
+            "message": "搜一个B站消息"
+        }
+        emitted = "".join(
+            p.obj.content for p in packets if isinstance(p.obj, AgentResponseDelta)
+        )
+        assert emitted == ""
+
+    def test_recovers_answer_from_non_stream_fallback(self) -> None:
+        from onyx.llm.model_response import Choice
+        from onyx.llm.model_response import Message
+        from onyx.llm.model_response import ModelResponse
+        from onyx.server.query_and_chat.streaming_models import AgentResponseDelta
+
+        fallback_response = ModelResponse(
+            id="fallback-1",
+            created="0",
+            choice=Choice(
+                finish_reason="stop",
+                message=Message(content="fallback answer"),
+            ),
+        )
+        llm = self._FallbackLLM(fallback_response)
+        llm_step_result, packets = self._run(llm)
+
+        assert llm.invoke_non_stream_calls == 1
+        assert llm_step_result.answer == "fallback answer"
+        assert llm_step_result.tool_calls is None
+        emitted = "".join(
+            p.obj.content for p in packets if isinstance(p.obj, AgentResponseDelta)
+        )
+        assert emitted == "fallback answer"

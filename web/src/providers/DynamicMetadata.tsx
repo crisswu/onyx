@@ -7,7 +7,9 @@ export default function DynamicMetadata() {
   const { enterpriseSettings } = useSettingsContext();
 
   useEffect(() => {
-    const title = enterpriseSettings?.application_name || "Onyx";
+    const configuredTitle = enterpriseSettings?.application_name?.trim();
+    const title =
+      configuredTitle && configuredTitle !== "Onyx" ? configuredTitle : "Eva";
     if (document.title !== title) {
       document.title = title;
     }

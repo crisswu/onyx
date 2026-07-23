@@ -23,10 +23,20 @@ import type {
   PiStreamEvent,
   PiTranscriptItem,
 } from "@/lib/pi/types";
-import { SvgTerminal } from "@opal/icons";
+import {
+  SvgAlertCircle,
+  SvgEditBig,
+  SvgSparkle,
+  SvgTerminal,
+  SvgTerminalSmall,
+} from "@opal/icons";
 import { Button } from "@opal/components";
 import { cn } from "@opal/utils";
 import { useUser } from "@/providers/UserProvider";
+import { BlinkingBar } from "@/app/app/message/BlinkingBar";
+import { TimelineHeaderRow } from "@/app/app/message/messageComponents/timeline/primitives/TimelineHeaderRow";
+import { TimelineRoot } from "@/app/app/message/messageComponents/timeline/primitives/TimelineRoot";
+import StepContainer from "@/app/app/message/messageComponents/timeline/StepContainer";
 
 function stringifyValue(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -152,6 +162,113 @@ interface PiConsoleRowProps {
   item: PiTranscriptItem;
 }
 
+function PiAvatarMark() {
+  return (
+    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-background-tint-02">
+      <SvgTerminal className="h-3.5 w-3.5 stroke-text-04" />
+    </div>
+  );
+}
+
+function PiUserMessage({ content }: { content: string }) {
+  return (
+    <div className="flex w-full flex-col justify-end">
+      <div className="flex justify-end">
+        <div className="md:max-w-150">
+          <div className="max-w-120 whitespace-break-spaces break-anywhere rounded-t-16 rounded-bl-16 bg-background-tint-02 px-3 py-2 md:max-w-150">
+            <p className="inline-block align-middle text-sm leading-6 text-text-05">
+              {content}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PiAssistantMessage({ item }: PiConsoleRowProps) {
+  return (
+    <div className="flex flex-col gap-3 px-3">
+      <div className="overflow-x-visible focus:outline-hidden select-text cursor-text">
+        <MinimalMarkdown
+          content={item.content}
+          streaming={item.running}
+          className="text-text-05"
+        />
+        {item.running && <BlinkingBar addMargin />}
+      </div>
+    </div>
+  );
+}
+
+function PiActivityMessage({ item }: PiConsoleRowProps) {
+  const isTool = item.type === "tool";
+  const isThinking = item.type === "thinking";
+  const isError = item.error || item.type === "error";
+  const Icon = isError
+    ? SvgAlertCircle
+    : isTool
+      ? SvgTerminalSmall
+      : SvgSparkle;
+  const headerText = isError
+    ? "Pi ran into an error"
+    : isTool
+      ? item.running
+        ? `Using ${item.title || "tool"}`
+        : `Used ${item.title || "tool"}`
+      : item.running
+        ? "Pi is thinking"
+        : "Thought";
+  const stepTitle = isTool
+    ? item.title || "Tool"
+    : isThinking
+      ? "Reasoning"
+      : item.title || "Error";
+  const showCodeSurface = isTool || isError;
+
+  return (
+    <TimelineRoot>
+      <TimelineHeaderRow left={<PiAvatarMark />}>
+        <div className="px-(--timeline-header-text-padding-x) py-(--timeline-header-text-padding-y)">
+          <p
+            className={cn(
+              "text-sm font-medium text-text-03",
+              item.running && !isError && "shimmer-text",
+              isError && "text-status-error-05"
+            )}
+          >
+            {headerText}
+          </p>
+        </div>
+      </TimelineHeaderRow>
+      <StepContainer
+        stepIcon={Icon}
+        header={stepTitle}
+        isFirstStep
+        isLastStep
+        surfaceBackground={isError ? "error" : "tint"}
+      >
+        {item.content ? (
+          showCodeSurface ? (
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-anywhere rounded-08 bg-background-neutral-00 px-3 py-2 font-mono text-xs leading-5 text-text-04">
+              {item.content}
+            </pre>
+          ) : (
+            <div className="whitespace-pre-wrap break-anywhere text-sm leading-6 text-text-04">
+              {item.content}
+            </div>
+          )
+        ) : item.running ? (
+          <div className="flex items-center gap-2 text-sm leading-6 text-text-03">
+            <span>Working</span>
+            <BlinkingBar />
+          </div>
+        ) : null}
+      </StepContainer>
+    </TimelineRoot>
+  );
+}
+
 function PiConsoleRow({ item }: PiConsoleRowProps) {
   const isUser = item.type === "user";
   const isTool = item.type === "tool";
@@ -159,63 +276,10 @@ function PiConsoleRow({ item }: PiConsoleRowProps) {
   const isAssistant = item.type === "assistant";
   const isError = item.error || item.type === "error";
 
-  const prefix = isUser
-    ? ">"
-    : isTool
-      ? item.title || "tool"
-      : isThinking
-        ? "think"
-      : isError
-        ? "error"
-        : "pi";
-
-  const displayContent = isUser ? item.content : item.content || "";
-
-  return (
-    <div
-      className={cn(
-        "grid w-full grid-cols-[4.5rem_minmax(0,1fr)] gap-3 rounded-08 border border-transparent px-2 py-1 sm:grid-cols-[5.5rem_minmax(0,1fr)]",
-        isThinking && "bg-background-tint-01",
-        !isThinking && !isUser && !isTool && !isError && "bg-background-neutral-00",
-        isTool && "bg-background-neutral-01",
-        isError && "border-action-danger-03 bg-background-tint-01"
-      )}
-    >
-      <div
-        className={cn(
-          "select-none truncate pt-0.5 text-right font-mono text-xs leading-5 text-text-03",
-          isUser && "text-link-03",
-          isTool && "text-text-02",
-          isThinking && "text-text-02",
-          isError && "text-action-danger-04"
-        )}
-      >
-        {prefix}
-      </div>
-      <div className="min-w-0">
-        {isAssistant ? (
-          <MinimalMarkdown
-            content={displayContent}
-            streaming={item.running}
-            className="text-sm leading-6 text-text-05"
-          />
-        ) : (
-          <div
-            className={cn(
-              "whitespace-pre-wrap break-anywhere font-mono text-xs leading-5 text-text-04",
-              isUser && "text-text-06",
-              isTool && "text-text-03",
-              isThinking && "text-text-03",
-              isError && "text-action-danger-05"
-            )}
-          >
-            {displayContent}
-          </div>
-        )}
-        {item.running && <span className="ml-1 animate-pulse">|</span>}
-      </div>
-    </div>
-  );
+  if (isUser) return <PiUserMessage content={item.content} />;
+  if (isAssistant) return <PiAssistantMessage item={item} />;
+  if (isThinking || isTool || isError) return <PiActivityMessage item={item} />;
+  return null;
 }
 
 interface PiStatusPillProps {
@@ -224,9 +288,7 @@ interface PiStatusPillProps {
 
 function PiStatusPill({ children }: PiStatusPillProps) {
   return (
-    <div className="max-w-full truncate text-xs text-text-03">
-      {children}
-    </div>
+    <div className="max-w-full truncate text-xs text-text-03">{children}</div>
   );
 }
 
@@ -257,6 +319,7 @@ function PiInputTopBar({
       <Button
         prominence="tertiary"
         size="sm"
+        icon={SvgEditBig}
         onClick={onNewSession}
         disabled={isRunning}
       >
@@ -349,19 +412,18 @@ export default function PiPage() {
       return;
     }
 
-    startSession()
-      .catch((error: unknown) => {
-        if (!mountedRef.current) return;
-        setItems([
-          {
-            id: newId("error"),
-            type: "error",
-            title: "Pi",
-            content: error instanceof Error ? error.message : String(error),
-            error: true,
-          },
-        ]);
-      });
+    startSession().catch((error: unknown) => {
+      if (!mountedRef.current) return;
+      setItems([
+        {
+          id: newId("error"),
+          type: "error",
+          title: "Pi",
+          content: error instanceof Error ? error.message : String(error),
+          error: true,
+        },
+      ]);
+    });
 
     return () => {
       mountedRef.current = false;
@@ -385,7 +447,9 @@ export default function PiPage() {
       setIsInterrupting(false);
       assistantItemIdRef.current = null;
       thinkingItemIdRef.current = null;
-      setItems((current) => current.map((item) => ({ ...item, running: false })));
+      setItems((current) =>
+        current.map((item) => ({ ...item, running: false }))
+      );
       return;
     }
 
@@ -407,7 +471,9 @@ export default function PiPage() {
         thinkingItemIdRef.current = null;
         setItems((current) =>
           current.map((item) =>
-            item.id === activeThinkingItemId ? { ...item, running: false } : item
+            item.id === activeThinkingItemId
+              ? { ...item, running: false }
+              : item
           )
         );
       }
@@ -416,7 +482,9 @@ export default function PiPage() {
         ? thinkingItemIdRef.current
         : assistantItemIdRef.current;
       if (!outputItemId) {
-        const newOutputItemId = newId(isThinkingDelta ? "thinking" : "assistant");
+        const newOutputItemId = newId(
+          isThinkingDelta ? "thinking" : "assistant"
+        );
         if (isThinkingDelta) {
           thinkingItemIdRef.current = newOutputItemId;
         } else {
@@ -467,7 +535,8 @@ export default function PiPage() {
       if (!itemId) return;
       const update = toolResultContent(event.partialResult);
       if (!update) return;
-      const baseContent = toolBaseContentRef.current.get(event.toolCallId) || "";
+      const baseContent =
+        toolBaseContentRef.current.get(event.toolCallId) || "";
       setItems((current) =>
         replaceItemContent(
           current,
@@ -483,12 +552,15 @@ export default function PiPage() {
       const itemId = toolItemIdsRef.current.get(event.toolCallId);
       if (!itemId) return;
       const result = toolResultContent(event.result);
-      const baseContent = toolBaseContentRef.current.get(event.toolCallId) || "";
+      const baseContent =
+        toolBaseContentRef.current.get(event.toolCallId) || "";
       setItems((current) =>
         replaceItemContent(
           current,
           itemId,
-          result && baseContent ? `${baseContent}\n\n${result}` : result || baseContent,
+          result && baseContent
+            ? `${baseContent}\n\n${result}`
+            : result || baseContent,
           {
             running: false,
             error: event.isError,
@@ -609,7 +681,7 @@ export default function PiPage() {
                 className="h-full w-full overflow-y-auto overscroll-y-contain"
                 style={{ scrollbarWidth: "thin" }}
               >
-                <div className="mx-auto flex w-full max-w-(--app-page-main-content-width) flex-col px-1 pb-8 pt-4">
+                <div className="mx-auto flex w-full max-w-(--app-page-main-content-width) flex-col gap-6 px-1 pb-8 pt-4">
                   {items.map((item) => (
                     <PiConsoleRow key={item.id} item={item} />
                   ))}

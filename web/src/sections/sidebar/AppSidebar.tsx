@@ -63,13 +63,14 @@ import { useModalContext } from "@/components/context/ModalContext";
 import {
   SvgDevKit,
   SvgEditBig,
+  SvgFileText,
   SvgFolderPlus,
   SvgMoreHorizontal,
   SvgOnyxOctagon,
   SvgSearchMenu,
   SvgSettings,
+  SvgTerminal,
 } from "@opal/icons";
-import SidebarTabSkeleton from "@/refresh-components/skeletons/SidebarTabSkeleton";
 import BuildModeIntroBackground from "@/app/craft/components/IntroBackground";
 import BuildModeIntroContent from "@/app/craft/components/IntroContent";
 import { CRAFT_PATH } from "@/app/craft/v1/constants";
@@ -80,6 +81,8 @@ import { dismissNotification } from "@/lib/notifications/api";
 import AccountPopover from "@/sections/sidebar/AccountPopover";
 import ChatSearchCommandMenu from "@/sections/sidebar/ChatSearchCommandMenu";
 import { useQueryController } from "@/providers/QueryControllerProvider";
+import { isBlackboardAllowedUser } from "@/lib/blackboard/access";
+import { isPiAllowedUser } from "@/lib/pi/access";
 
 // Visible-agents = pinned-agents + current-agent (if current-agent not in pinned-agents)
 // OR Visible-agents = pinned-agents (if current-agent in pinned-agents)
@@ -101,25 +104,13 @@ function buildVisibleAgents(
   return [visibleAgents, currentAgentIsPinned];
 }
 
-const SKELETON_WIDTHS_BASE = ["w-4/5", "w-4/5", "w-3/5"];
-
-function shuffleWidths(): string[] {
-  return [...SKELETON_WIDTHS_BASE].sort(() => Math.random() - 0.5);
-}
+const RECENT_CHAT_SESSION_LIMIT = 10;
 
 interface RecentsSectionProps {
   chatSessions: ChatSession[];
-  hasMore: boolean;
-  isLoadingMore: boolean;
-  onLoadMore: () => void;
 }
 
-function RecentsSection({
-  chatSessions,
-  hasMore,
-  isLoadingMore,
-  onLoadMore,
-}: RecentsSectionProps) {
+function RecentsSection({ chatSessions }: RecentsSectionProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: DRAG_TYPES.RECENTS,
     data: {
@@ -127,32 +118,10 @@ function RecentsSection({
     },
   });
 
-  // Re-shuffle skeleton widths each time loaded session count changes
-  const skeletonWidths = useMemo(shuffleWidths, [chatSessions.length]);
-
-  // Sentinel ref for IntersectionObserver-based infinite scroll
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const onLoadMoreRef = useRef(onLoadMore);
-  onLoadMoreRef.current = onLoadMore;
-
-  useEffect(() => {
-    if (!hasMore || isLoadingMore) return;
-
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          onLoadMoreRef.current();
-        }
-      },
-      { threshold: 0 }
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [hasMore, isLoadingMore]);
+  const recentChatSessions = useMemo(
+    () => chatSessions.slice(0, RECENT_CHAT_SESSION_LIMIT),
+    [chatSessions]
+  );
 
   return (
     <div
@@ -163,32 +132,19 @@ function RecentsSection({
       )}
     >
       <SidebarLayouts.Section title="Recents">
-        {chatSessions.length === 0 ? (
+        {recentChatSessions.length === 0 ? (
           <Text as="p" text01 className="px-3">
             Try sending a message! Your chat history will appear here.
           </Text>
         ) : (
           <>
-            {chatSessions.map((chatSession) => (
+            {recentChatSessions.map((chatSession) => (
               <ChatButton
                 key={chatSession.id}
                 chatSession={chatSession}
                 draggable
               />
             ))}
-            {hasMore &&
-              skeletonWidths.map((width, i) => (
-                <div
-                  key={i}
-                  ref={i === 0 ? sentinelRef : undefined}
-                  className={cn(
-                    "transition-opacity duration-300",
-                    isLoadingMore ? "opacity-100" : "opacity-40"
-                  )}
-                >
-                  <SidebarTabSkeleton textWidth={width} />
-                </div>
-              ))}
           </>
         )}
       </SidebarLayouts.Section>
@@ -208,9 +164,6 @@ const AppSidebar = memo(function AppSidebarInner() {
     chatSessions,
     refreshChatSessions,
     isLoading: isLoadingChatSessions,
-    hasMore,
-    isLoadingMore,
-    loadMore,
   } = useChatSessions();
   const {
     projects,
@@ -476,6 +429,8 @@ const AppSidebar = memo(function AppSidebarInner() {
   const defaultAppMode =
     (user?.preferences?.default_app_mode?.toLowerCase() as "chat" | "search") ??
     "chat";
+  const piAllowed = isPiAllowedUser(user);
+  const blackboardAllowed = isBlackboardAllowedUser(user);
   const newSessionButton = useMemo(() => {
     const href =
       combinedSettings?.settings?.disable_default_assistant && currentAgent
@@ -505,6 +460,22 @@ const AppSidebar = memo(function AppSidebarInner() {
     currentAgent,
     defaultAppMode,
   ]);
+  const blackboardButton = useMemo(
+    () => (
+      <div data-testid="AppSidebar/blackboard">
+        <SidebarTab
+          icon={SvgFileText}
+          href="/app/blackboard"
+          folded={folded}
+          selected={activeSidebarTab.isBlackboard()}
+          variant={folded ? "sidebar-heavy" : "sidebar-light"}
+        >
+          黑板
+        </SidebarTab>
+      </div>
+    ),
+    [folded, activeSidebarTab]
+  );
 
   const buildButton = useMemo(
     () => (
@@ -553,6 +524,22 @@ const AppSidebar = memo(function AppSidebarInner() {
       </div>
     ),
     [folded, activeSidebarTab, visibleAgents]
+  );
+  const piButton = useMemo(
+    () => (
+      <div data-testid="AppSidebar/pi">
+        <SidebarTab
+          icon={SvgTerminal}
+          href="/app/pi"
+          folded={folded}
+          selected={activeSidebarTab.isPi()}
+          variant={folded ? "sidebar-heavy" : "sidebar-light"}
+        >
+          Pi
+        </SidebarTab>
+      </div>
+    ),
+    [folded, activeSidebarTab]
   );
   const newProjectButton = useMemo(
     () => (
@@ -668,6 +655,7 @@ const AppSidebar = memo(function AppSidebarInner() {
         >
           <div className="flex flex-col">
             {newSessionButton}
+            {blackboardAllowed && blackboardButton}
             {searchChatsButton}
             {isOnyxCraftEnabled && buildButton}
             {folded && moreAgentsButton}
@@ -685,6 +673,7 @@ const AppSidebar = memo(function AppSidebarInner() {
                 onDragEnd={handleAgentDragEnd}
               >
                 <SidebarLayouts.Section title="Agents">
+                  {piAllowed && piButton}
                   <SortableContext
                     items={visibleAgentIds}
                     strategy={verticalListSortingStrategy}
@@ -727,12 +716,7 @@ const AppSidebar = memo(function AppSidebarInner() {
                 </SidebarLayouts.Section>
 
                 {/* Recents */}
-                <RecentsSection
-                  chatSessions={chatSessions}
-                  hasMore={hasMore}
-                  isLoadingMore={isLoadingMore}
-                  onLoadMore={loadMore}
-                />
+                <RecentsSection chatSessions={chatSessions} />
               </DndContext>
             </>
           )}

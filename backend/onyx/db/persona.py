@@ -1563,7 +1563,9 @@ def update_default_assistant_configuration(
 
     # Update system prompt if explicitly requested
     if update_system_prompt:
-        persona.system_prompt = system_prompt
+        persona.system_prompt = (
+            system_prompt if system_prompt and system_prompt.strip() else None
+        )
 
     # Update tools if provided
     if tool_ids is not None:
