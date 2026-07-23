@@ -90,4 +90,17 @@ export const IMAGE_PROVIDER_GROUPS: ProviderGroup[] = [
       },
     ],
   },
+  {
+    name: "Qwen",
+    providers: [
+      {
+        image_provider_id: "qwen_image_3_0_pro",
+        model_name: "qwen-image-3.0-pro",
+        provider_name: "qwen",
+        title: "Qwen Image 3.0 Pro",
+        description:
+          "Qwen's latest image generation and editing model through Alibaba Cloud Model Studio.",
+      },
+    ],
+  },
 ];

@@ -1,6 +1,8 @@
 import json
+from typing import Any
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from onyx.image_gen.exceptions import ImageProviderCredentialsError
@@ -9,10 +11,12 @@ from onyx.image_gen.interfaces import ImageGenerationProviderCredentials
 from onyx.image_gen.interfaces import ReferenceImage
 from onyx.image_gen.providers.azure_img_gen import AzureImageGenerationProvider
 from onyx.image_gen.providers.openai_img_gen import OpenAIImageGenerationProvider
+from onyx.image_gen.providers.qwen_img_gen import QwenImageGenerationProvider
 from onyx.image_gen.providers.vertex_img_gen import VertexImageGenerationProvider
 
 OPENAI_PROVIDER = "openai"
 AZURE_PROVIDER = "azure"
+QWEN_PROVIDER = "qwen"
 VERTEX_PROVIDER = "vertex_ai"
 
 
@@ -99,6 +103,37 @@ def test_build_azure_provider_fails_missing_credential() -> None:
 
         with pytest.raises(ImageProviderCredentialsError):
             get_image_generation_provider(AZURE_PROVIDER, credentials)
+
+
+def test_build_qwen_provider_from_api_key_and_base() -> None:
+    credentials = _get_default_image_gen_creds()
+
+    credentials.api_key = "test-key"
+    credentials.api_base = "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1"
+
+    image_gen_provider = get_image_generation_provider(QWEN_PROVIDER, credentials)
+
+    assert isinstance(image_gen_provider, QwenImageGenerationProvider)
+    assert image_gen_provider._api_key == "test-key"
+    assert (
+        image_gen_provider._api_base
+        == "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1"
+    )
+    assert image_gen_provider.supports_reference_images is True
+    assert image_gen_provider.max_reference_images == 3
+
+
+def test_build_qwen_provider_fails_missing_credential() -> None:
+    default_creds = _get_default_image_gen_creds()
+    default_creds.api_key = "test-key"
+    default_creds.api_base = "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1"
+
+    for attribute in ["api_key", "api_base"]:
+        credentials = default_creds.model_copy()
+        setattr(credentials, attribute, None)
+
+        with pytest.raises(ImageProviderCredentialsError):
+            get_image_generation_provider(QWEN_PROVIDER, credentials)
 
 
 def test_build_vertex_provider_from_credentials() -> None:
@@ -288,4 +323,146 @@ def test_azure_provider_rejects_reference_images_for_unsupported_model() -> None
             size="1024x1024",
             n=1,
             reference_images=[ReferenceImage(data=b"image-1", mime_type="image/png")],
+        )
+
+
+def test_qwen_provider_calls_dashscope_and_returns_base64() -> None:
+    provider = QwenImageGenerationProvider(
+        api_key="test-key",
+        api_base="https://workspace.cn-beijing.maas.aliyuncs.com/api/v1",
+    )
+    requests_seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request)
+        if request.method == "POST":
+            assert (
+                str(request.url)
+                == "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+            )
+            assert request.headers["Authorization"] == "Bearer test-key"
+            request_body = json.loads(request.content)
+            assert request_body["model"] == "qwen-image-3.0-pro"
+            assert request_body["input"]["messages"][0]["content"] == [
+                {"text": "draw a mountain"}
+            ]
+            assert request_body["parameters"]["size"] == "1024*1024"
+            assert request_body["parameters"]["n"] == 1
+            return httpx.Response(
+                200,
+                json={
+                    "output": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": [
+                                        {"image": "https://example.com/image.png"}
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                },
+            )
+
+        if str(request.url) == "https://example.com/image.png":
+            return httpx.Response(200, content=b"fake-png-bytes")
+
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+
+    with patch(
+        "onyx.image_gen.providers.qwen_img_gen.httpx.Client",
+        side_effect=lambda **_: httpx.Client(transport=transport),
+    ):
+        response = provider.generate_image(
+            prompt="draw a mountain",
+            model="qwen-image-3.0-pro",
+            size="1024x1024",
+            n=1,
+        )
+
+    assert len(requests_seen) == 2
+    assert response.data
+    assert response.data[0].b64_json == "ZmFrZS1wbmctYnl0ZXM="
+    assert response.data[0].revised_prompt == "draw a mountain"
+
+
+def test_qwen_provider_sends_reference_images_as_data_uris() -> None:
+    provider = QwenImageGenerationProvider(
+        api_key="test-key",
+        api_base="https://workspace.cn-beijing.maas.aliyuncs.com/api/v1",
+    )
+    post_payloads: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            post_payloads.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "output": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": [
+                                        {"image": "https://example.com/image.png"}
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                },
+            )
+
+        if str(request.url) == "https://example.com/image.png":
+            return httpx.Response(200, content=b"fake-png-bytes")
+
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+
+    with patch(
+        "onyx.image_gen.providers.qwen_img_gen.httpx.Client",
+        side_effect=lambda **_: httpx.Client(transport=transport),
+    ):
+        response = provider.generate_image(
+            prompt="edit this image",
+            model="qwen-image-3.0-pro",
+            size="1024x1024",
+            n=1,
+            reference_images=[
+                ReferenceImage(data=b"image-1", mime_type="image/png"),
+                ReferenceImage(data=b"image-2", mime_type="image/jpeg"),
+            ],
+        )
+
+    assert response.data
+    assert response.data[0].b64_json == "ZmFrZS1wbmctYnl0ZXM="
+    assert post_payloads[0]["input"]["messages"][0]["content"] == [
+        {"image": "data:image/png;base64,aW1hZ2UtMQ=="},
+        {"image": "data:image/jpeg;base64,aW1hZ2UtMg=="},
+        {"text": "edit this image"},
+    ]
+
+
+def test_qwen_provider_rejects_too_many_reference_images() -> None:
+    provider = QwenImageGenerationProvider(
+        api_key="test-key",
+        api_base="https://workspace.cn-beijing.maas.aliyuncs.com/api/v1",
+    )
+
+    with pytest.raises(ValueError, match="at most 3 reference images"):
+        provider.generate_image(
+            prompt="edit this image",
+            model="qwen-image-3.0-pro",
+            size="1024x1024",
+            n=1,
+            reference_images=[
+                ReferenceImage(data=b"image-1", mime_type="image/png"),
+                ReferenceImage(data=b"image-2", mime_type="image/png"),
+                ReferenceImage(data=b"image-3", mime_type="image/png"),
+                ReferenceImage(data=b"image-4", mime_type="image/png"),
+            ],
         )

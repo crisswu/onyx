@@ -3,6 +3,7 @@ import { ImageGenFormBaseProps } from "@/refresh-pages/admin/ImageGenerationPage
 import { OpenAIImageGenForm } from "@/refresh-pages/admin/ImageGenerationPage/forms/OpenAIImageGenForm";
 import { AzureImageGenForm } from "@/refresh-pages/admin/ImageGenerationPage/forms/AzureImageGenForm";
 import { VertexImageGenForm } from "@/refresh-pages/admin/ImageGenerationPage/forms/VertexImageGenForm";
+import { QwenImageGenForm } from "@/refresh-pages/admin/ImageGenerationPage/forms/QwenImageGenForm";
 
 /**
  * Factory function that routes to the correct provider-specific form
@@ -18,6 +19,8 @@ export function getImageGenForm(props: ImageGenFormBaseProps): React.ReactNode {
       return <AzureImageGenForm {...props} />;
     case "vertex_ai":
       return <VertexImageGenForm {...props} />;
+    case "qwen":
+      return <QwenImageGenForm {...props} />;
     default:
       // Fallback to OpenAI form for unknown providers
       console.warn(
