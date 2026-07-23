@@ -123,6 +123,23 @@ def test_build_qwen_provider_from_api_key_and_base() -> None:
     assert image_gen_provider.max_reference_images == 3
 
 
+def test_build_qwen_provider_normalizes_openai_compatible_base() -> None:
+    credentials = _get_default_image_gen_creds()
+
+    credentials.api_key = "test-key"
+    credentials.api_base = (
+        "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    )
+
+    image_gen_provider = get_image_generation_provider(QWEN_PROVIDER, credentials)
+
+    assert isinstance(image_gen_provider, QwenImageGenerationProvider)
+    assert (
+        image_gen_provider._api_base
+        == "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1"
+    )
+
+
 def test_build_qwen_provider_fails_missing_credential() -> None:
     default_creds = _get_default_image_gen_creds()
     default_creds.api_key = "test-key"
@@ -387,6 +404,82 @@ def test_qwen_provider_calls_dashscope_and_returns_base64() -> None:
     assert response.data
     assert response.data[0].b64_json == "ZmFrZS1wbmctYnl0ZXM="
     assert response.data[0].revised_prompt == "draw a mountain"
+
+
+def test_qwen_provider_accepts_openai_compatible_base_url() -> None:
+    provider = QwenImageGenerationProvider(
+        api_key="test-key",
+        api_base="https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    )
+    post_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            post_urls.append(str(request.url))
+            return httpx.Response(
+                200,
+                json={
+                    "output": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": [
+                                        {"image": "https://example.com/image.png"}
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                },
+            )
+
+        if str(request.url) == "https://example.com/image.png":
+            return httpx.Response(200, content=b"fake-png-bytes")
+
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+
+    with patch(
+        "onyx.image_gen.providers.qwen_img_gen.httpx.Client",
+        side_effect=lambda **_: httpx.Client(transport=transport),
+    ):
+        provider.generate_image(
+            prompt="draw a mountain",
+            model="qwen-image-3.0-pro",
+            size="1024x1024",
+            n=1,
+        )
+
+    assert post_urls == [
+        "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    ]
+
+
+def test_qwen_provider_reports_non_json_http_errors() -> None:
+    provider = QwenImageGenerationProvider(
+        api_key="test-key",
+        api_base="https://workspace.cn-beijing.maas.aliyuncs.com/api/v1",
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    transport = httpx.MockTransport(handler)
+
+    with (
+        patch(
+            "onyx.image_gen.providers.qwen_img_gen.httpx.Client",
+            side_effect=lambda **_: httpx.Client(transport=transport),
+        ),
+        pytest.raises(RuntimeError, match="HTTP 404: not found"),
+    ):
+        provider.generate_image(
+            prompt="draw a mountain",
+            model="qwen-image-3.0-pro",
+            size="1024x1024",
+            n=1,
+        )
 
 
 def test_qwen_provider_sends_reference_images_as_data_uris() -> None:

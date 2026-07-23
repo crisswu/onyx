@@ -26,7 +26,7 @@ class QwenImageGenerationProvider(ImageGenerationProvider):
         api_base: str,
     ) -> None:
         self._api_key = api_key
-        self._api_base = api_base.rstrip("/")
+        self._api_base = _normalize_api_base(api_base)
 
     @classmethod
     def validate_credentials(
@@ -151,6 +151,14 @@ def _build_generation_url(api_base: str) -> str:
     return f"{api_base}{_MULTIMODAL_GENERATION_PATH}"
 
 
+def _normalize_api_base(api_base: str) -> str:
+    normalized_api_base = api_base.rstrip("/")
+    compatible_mode_suffix = "/compatible-mode/v1"
+    if normalized_api_base.endswith(compatible_mode_suffix):
+        return f"{normalized_api_base.removesuffix(compatible_mode_suffix)}/api/v1"
+    return normalized_api_base
+
+
 def _normalize_size(size: str) -> str:
     return size.replace("x", "*")
 
@@ -164,8 +172,14 @@ def _raise_for_qwen_error(response: httpx.Response) -> None:
     try:
         payload = response.json()
     except ValueError:
-        response.raise_for_status()
-        raise RuntimeError("Qwen image generation failed with an invalid response.")
+        if response.is_success:
+            raise RuntimeError(
+                "Qwen image generation failed with an invalid response."
+            )
+        raise RuntimeError(
+            "Qwen image generation failed: "
+            f"HTTP {response.status_code}: {response.text[:500]}"
+        )
 
     if response.is_success:
         if not payload.get("code"):
@@ -207,5 +221,9 @@ def _extract_image_urls(payload: dict[str, Any]) -> list[str]:
 
 def _download_image_as_base64(client: httpx.Client, image_url: str) -> str:
     image_response = client.get(image_url)
-    image_response.raise_for_status()
+    if not image_response.is_success:
+        raise RuntimeError(
+            "Failed to download Qwen generated image: "
+            f"HTTP {image_response.status_code}"
+        )
     return base64.b64encode(image_response.content).decode("utf-8")
