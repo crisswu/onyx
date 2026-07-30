@@ -11,7 +11,7 @@ Environment=PI_BRIDGE_PORT=8787
 Environment=PI_BINARY=/home/criss/Pi/pi
 Environment=PI_WORKSPACE=/home/criss/pi-workspace
 Environment=PI_PROVIDER=qwen
-Environment=PI_MODEL=qwen3.7-plus
+Environment=PI_MODEL=qwen3.7-max
 Environment=PI_SESSION_DIR=/home/criss/Pi/.pi/agent/onyx-sessions
 Environment=PI_CODING_AGENT_DIR=/home/criss/Pi/.pi/agent
 Environment=PI_MAX_SESSIONS=20
