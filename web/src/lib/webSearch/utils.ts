@@ -53,6 +53,12 @@ export const SEARCH_PROVIDER_DETAILS: Record<
     helper: "Connect to Tavily to set up web search.",
     apiKeyUrl: "https://app.tavily.com/home",
   },
+  bocha: {
+    label: "Bocha",
+    subtitle: "Bocha Web Search API",
+    helper: "Connect to Bocha to set up web search.",
+    apiKeyUrl: "https://open.bochaai.com/",
+  },
   google_pse: {
     label: "Google PSE",
     subtitle: "Google",
@@ -109,6 +115,7 @@ const SEARCH_PROVIDER_CAPABILITIES: Record<
   serper: { requiresApiKey: true, requiredConfigKeys: [] },
   brave: { requiresApiKey: true, requiredConfigKeys: [] },
   tavily: { requiresApiKey: true, requiredConfigKeys: [] },
+  bocha: { requiresApiKey: true, requiredConfigKeys: [] },
   google_pse: {
     requiresApiKey: true,
     requiredConfigKeys: ["search_engine_id"],

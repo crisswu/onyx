@@ -354,6 +354,39 @@ test.describe("Web Search Provider Configuration", () => {
     });
   });
 
+  test.describe("Bocha Provider", () => {
+    const BOCHA_API_KEY = process.env.BOCHA_API_KEY;
+
+    test.skip(!BOCHA_API_KEY, "BOCHA_API_KEY environment variable not set");
+
+    test("should configure Bocha as web search provider", async ({ page }) => {
+      await openProviderModal(page, "Bocha");
+
+      const modalDialog = page.getByRole("dialog", { name: /set up bocha/i });
+      await expect(modalDialog).toBeVisible({ timeout: 10000 });
+
+      const apiKeyInput = modalDialog.getByLabel(/api key/i);
+      await apiKeyInput.waitFor({ state: "visible", timeout: 5000 });
+      await apiKeyInput.clear();
+      await apiKeyInput.fill(BOCHA_API_KEY!);
+
+      const modalConnectButton = modalDialog.getByRole("button", {
+        name: "Connect",
+        exact: true,
+      });
+      await expect(modalConnectButton).toBeEnabled({ timeout: 5000 });
+      await modalConnectButton.click();
+
+      await expect(modalDialog).not.toBeVisible({ timeout: 30000 });
+      await page.waitForLoadState("networkidle");
+
+      const bochaCard = findProviderCard(page, "Bocha");
+      await expect(
+        bochaCard.getByRole("button", { name: "Current Default" })
+      ).toBeVisible({ timeout: 15000 });
+    });
+  });
+
   test.describe("Provider Switching", () => {
     // These tests require both providers to be configured
     const EXA_API_KEY = process.env.EXA_API_KEY;

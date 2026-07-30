@@ -1,5 +1,6 @@
 import pytest
 
+from onyx.tools.tool_implementations.web_search.clients.bocha_client import BochaClient
 from onyx.tools.tool_implementations.web_search.clients.brave_client import BraveClient
 from onyx.tools.tool_implementations.web_search.providers import (
     build_search_provider_from_config,
@@ -15,6 +16,7 @@ def test_provider_requires_api_key() -> None:
     assert provider_requires_api_key(WebSearchProviderType.EXA) is True
     assert provider_requires_api_key(WebSearchProviderType.BRAVE) is True
     assert provider_requires_api_key(WebSearchProviderType.SERPER) is True
+    assert provider_requires_api_key(WebSearchProviderType.BOCHA) is True
     assert provider_requires_api_key(WebSearchProviderType.GOOGLE_PSE) is True
     assert provider_requires_api_key(WebSearchProviderType.SEARXNG) is False
 
@@ -97,6 +99,52 @@ def test_build_serper_provider_requires_api_key() -> None:
             provider_type=WebSearchProviderType.SERPER,
             api_key=None,
             config={},
+        )
+
+
+def test_build_bocha_provider_requires_api_key() -> None:
+    with pytest.raises(ValueError, match="API key is required"):
+        build_search_provider_from_config(
+            provider_type=WebSearchProviderType.BOCHA,
+            api_key=None,
+            config={},
+        )
+
+
+def test_build_bocha_provider_with_optional_config() -> None:
+    provider = build_search_provider_from_config(
+        provider_type=WebSearchProviderType.BOCHA,
+        api_key="test-api-key",
+        config={
+            "freshness": "oneMonth",
+            "summary": "false",
+            "timeout_seconds": "12",
+        },
+    )
+
+    assert isinstance(provider, BochaClient)
+    assert provider._freshness == "oneMonth"  # noqa: SLF001
+    assert provider._summary is False  # noqa: SLF001
+    assert provider._timeout_seconds == 12  # noqa: SLF001
+
+
+def test_build_bocha_provider_accepts_boolean_summary_config() -> None:
+    provider = build_search_provider_from_config(
+        provider_type=WebSearchProviderType.BOCHA,
+        api_key="test-api-key",
+        config={"summary": False},
+    )
+
+    assert isinstance(provider, BochaClient)
+    assert provider._summary is False  # noqa: SLF001
+
+
+def test_build_bocha_provider_rejects_invalid_summary_config() -> None:
+    with pytest.raises(ValueError, match="summary"):
+        build_search_provider_from_config(
+            provider_type=WebSearchProviderType.BOCHA,
+            api_key="test-api-key",
+            config={"summary": "not-a-bool"},
         )
 
 
