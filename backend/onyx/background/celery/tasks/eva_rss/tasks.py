@@ -12,16 +12,22 @@ logger = setup_logger()
 
 
 @shared_task(name=OnyxCeleryTask.CHECK_EVA_RSS_FETCH, ignore_result=True)
-def check_eva_rss_fetch() -> None:
+def check_eva_rss_fetch(*, tenant_id: str | None = None) -> None:
     """Fetch due RSS subscriptions for the owner/default EVA local store."""
+    _ = tenant_id
     db = EvaRssDB()
     results = fetch_due_subscriptions(db)
     logger.info("EVA RSS due fetch complete: subscriptions=%s", len(results))
 
 
 @shared_task(name=OnyxCeleryTask.EVA_RSS_FETCH_SUBSCRIPTION, ignore_result=True)
-def eva_rss_fetch_subscription(subscription_id: int) -> None:
+def eva_rss_fetch_subscription(
+    subscription_id: int,
+    *,
+    tenant_id: str | None = None,
+) -> None:
     """Fetch a single RSS subscription from the owner/default EVA local store."""
+    _ = tenant_id
     db = EvaRssDB()
     subscription = db.get_subscription(subscription_id)
     if subscription is None:
