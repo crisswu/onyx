@@ -104,7 +104,7 @@ function buildVisibleAgents(
   return [visibleAgents, currentAgentIsPinned];
 }
 
-const RECENT_CHAT_SESSION_LIMIT = 10;
+const RECENT_CHAT_SESSION_LIMIT = 5;
 
 interface RecentsSectionProps {
   chatSessions: ChatSession[];

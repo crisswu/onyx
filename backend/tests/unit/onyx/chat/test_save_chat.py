@@ -9,6 +9,9 @@ from pytest import MonkeyPatch
 
 from onyx.chat import save_chat
 from onyx.chat.save_chat import _extract_referenced_file_descriptors
+from onyx.chat.save_chat import _write_eva_conversation_memory
+from onyx.configs.constants import DEFAULT_PERSONA_ID
+from onyx.db.models import MessageType
 from onyx.file_store.models import ChatFileType
 from onyx.tools.models import PythonExecutionFile
 from onyx.tools.models import ToolCallInfo
@@ -210,3 +213,83 @@ def test_save_chat_turn_sanitizes_message_and_reasoning(
 
     assert mock_msg.message == "helloworld"
     assert mock_msg.reasoning_tokens == "thinking"
+
+
+# ---- _write_eva_conversation_memory tests ----
+
+
+def _make_fake_assistant_message(
+    persona_id: int | None, user_email: str = "a@example.com"
+) -> MagicMock:
+    user_message = MagicMock()
+    user_message.message_type = MessageType.USER
+    user_message.message = "hello"
+
+    chat_user = MagicMock()
+    chat_user.is_anonymous = False
+    chat_user.email = user_email
+
+    chat_session = MagicMock()
+    chat_session.persona_id = persona_id
+    chat_session.user = chat_user
+
+    assistant_message = MagicMock()
+    assistant_message.parent_message = user_message
+    assistant_message.chat_session = chat_session
+    return assistant_message
+
+
+def _patch_eva_conversation_db(monkeypatch: MonkeyPatch) -> MagicMock:
+    mock_db = MagicMock()
+    mock_db_cls = MagicMock(return_value=mock_db)
+    monkeypatch.setattr(save_chat, "EvaConversationDB", mock_db_cls)
+    monkeypatch.setattr(
+        save_chat,
+        "eva_conversation_db_path_for_user",
+        lambda _user_key: "/tmp/fake_conversation.db",
+    )
+    return mock_db
+
+
+def test_eva_memory_written_for_default_persona(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    mock_db = _patch_eva_conversation_db(monkeypatch)
+
+    assistant_message = _make_fake_assistant_message(DEFAULT_PERSONA_ID)
+    _write_eva_conversation_memory(assistant_message, "hi there")
+
+    mock_db.add_conversation.assert_called_once_with("hello", "hi there")
+
+
+def test_eva_memory_skipped_for_custom_persona(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    mock_db = _patch_eva_conversation_db(monkeypatch)
+
+    assistant_message = _make_fake_assistant_message(DEFAULT_PERSONA_ID + 1)
+    _write_eva_conversation_memory(assistant_message, "hi there")
+
+    mock_db.add_conversation.assert_not_called()
+
+
+def test_eva_memory_skipped_when_persona_missing(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    mock_db = _patch_eva_conversation_db(monkeypatch)
+
+    assistant_message = _make_fake_assistant_message(None)
+    _write_eva_conversation_memory(assistant_message, "hi there")
+
+    mock_db.add_conversation.assert_not_called()
+
+
+def test_eva_memory_skipped_without_assistant_text(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    mock_db = _patch_eva_conversation_db(monkeypatch)
+
+    assistant_message = _make_fake_assistant_message(DEFAULT_PERSONA_ID)
+    _write_eva_conversation_memory(assistant_message, None)
+
+    mock_db.add_conversation.assert_not_called()

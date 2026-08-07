@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from onyx.chat.chat_state import ChatStateContainer
 from onyx.chat.chat_state import SearchDocKey
+from onyx.configs.constants import DEFAULT_PERSONA_ID
 from onyx.configs.constants import DocumentSource
 from onyx.context.search.models import SearchDoc
 from onyx.db.chat import add_search_docs_to_chat_message
@@ -42,7 +43,17 @@ def _write_eva_conversation_memory(
     if not user_message.message:
         return
 
-    chat_user = assistant_message.chat_session.user
+    chat_session = assistant_message.chat_session
+    if chat_session is None:
+        return
+    # EVA conversation memory belongs to the default assistant only. Custom
+    # agents are isolated from EVA: their conversations are still stored in
+    # the normal Onyx chat history, but must not be written into EVA's memory
+    # library.
+    if chat_session.persona_id != DEFAULT_PERSONA_ID:
+        return
+
+    chat_user = chat_session.user
     if chat_user is None:
         return
 
