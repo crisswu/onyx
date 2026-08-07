@@ -379,6 +379,32 @@ const server = createServer(async (request, response) => {
     }
 
     if (
+      request.method === "POST" &&
+      url.pathname === "/set_model"
+    ) {
+      const body = await readJson(request);
+      const { provider, modelId } = body;
+      if (!provider || !modelId) {
+        writeJson(response, 400, { detail: "provider and modelId are required" });
+        return;
+      }
+      const results = [];
+      for (const [sessionId, session] of sessions) {
+        try {
+          const result = await session.request(
+            { type: "set_model", provider, modelId },
+            15000
+          );
+          results.push({ sessionId, success: result.success, data: result.data });
+        } catch (error) {
+          results.push({ sessionId, success: false, error: error.message });
+        }
+      }
+      writeJson(response, 200, { success: true, results });
+      return;
+    }
+
+    if (
       request.method === "DELETE" &&
       parts.length === 2 &&
       parts[0] === "sessions"
